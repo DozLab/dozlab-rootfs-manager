@@ -1,0 +1,84 @@
+# Docker images and containers
+*.tar
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+
+# Build artifacts
+build/
+dist/
+bin/
+
+# Temporary build files
+tmp/
+temp/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+logs/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Docker compose override
+docker-compose.override.yml
+
+# Vagrant
+.vagrant/
+
+# VM files
+*.vmdk
+*.vdi
+*.qcow2
+*.img
+
+# Firecracker files
+*.ext4
+vmlinux*
+rootfs.ext4
+
+# Init binaries
+init
+custom-init
+
+# Test artifacts
+test-results/
+coverage/
+
+# Kernel builds
+linux-*/
+kernel/
+
+# Initrd builds
+initrd/
+initramfs/
+
+# Build cache
+.buildcache/
+.cache/
+
+# Go binaries (for init system)
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.o
+*.a
+go.work
+go.work.sum
+vendor/
