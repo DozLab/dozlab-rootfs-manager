@@ -10,5 +10,8 @@ RUN sed -i -e 's/^AcceptEnv LANG LC_\*$/#AcceptEnv LANG LC_*/' /etc/ssh/sshd_con
 
 RUN mkdir -m 0700 -p /root/.ssh
 
-# Set the root password to root when logging in through the VM's ttyS0 console
-RUN echo "root:root" | chpasswd
+# Enable passwordless login for root user (lab environment)
+# Remove password requirement for root account
+RUN passwd -d root && \
+    # Allow passwordless login via console
+    sed -i 's/nullok_secure/nullok/' /etc/pam.d/common-auth

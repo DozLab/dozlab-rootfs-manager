@@ -331,6 +331,23 @@ kubectl apply -f test-manifests/
 - Minimal package installation
 - Security scanning integration
 
+### Lab Environment Access
+**⚠️ Important: Lab Security Configuration**
+
+This is a lab/educational environment optimized for ease of use:
+- **Passwordless root access** is enabled for console/VM access
+- Root account has no password requirement (uses `passwd -d root`)
+- PAM is configured to allow null passwords for convenience
+
+**Security Recommendations:**
+- These images are intended for isolated lab environments only
+- Do NOT use in production or exposed environments
+- For production use, implement proper authentication:
+  - SSH key-based authentication
+  - Strong password policies
+  - Disable root login
+  - Use non-privileged users
+
 ### Runtime Security
 ```bash
 # Run as non-privileged user
