@@ -1,399 +1,544 @@
 # Dozlab Rootfs Manager
 
-Container and root filesystem management for lab environments, providing custom VM images and container runtime configurations.
+Container and root filesystem management for lab environments, providing custom VM images for Firecracker-based virtual machines. This repository manages the complete lifecycle from base images to specialized lab environments.
 
 ## Features
 
-- **Custom Lab Images**: Build specialized container images for different lab types
-- **Root Filesystem Management**: Custom initrd and rootfs creation
-- **Multi-Lab Support**: Different lab environments (K8s, VM, custom)
-- **Firecracker Integration**: MicroVM support with custom kernels
-- **Build Automation**: Automated image building and deployment
+- **Base Image**: Ubuntu 22.04-based foundational image with systemd, networking, and SSH support
+- **Init Container**: Automated rootfs image download, preparation, and resizing for Firecracker VMs
+- **Kubernetes Lab**: Complete K8s environment with kubeadm, kubelet, kubectl, and containerd runtime
+- **VM Lab**: Minimal general-purpose VM environment with basic utilities
+- **Firecracker Integration**: Purpose-built for running labs in Firecracker MicroVMs
+- **Build Automation**: Makefile-based build system for each component
 
 ## Architecture
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Base Images   │────│  Lab Builders   │────│ Runtime Images  │
-│                 │    │                 │    │                 │
-│ • Ubuntu/Alpine │    │ • K8s Lab       │    │ • lab-k8s:latest│
-│ • Custom Kernel │    │ • VM Lab        │    │ • lab-vm:latest │
-│ • Init System   │    │ • Custom Labs   │    │ • lab-custom    │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
+┌──────────────────┐    ┌─────────────────┐    ┌──────────────────┐
+│   Base Image     │───▶│  Lab Images     │───▶│ Firecracker VMs  │
+│                  │    │                 │    │                  │
+│ • Ubuntu 22.04   │    │ • K8s Lab       │    │ • Running Labs   │
+│ • systemd        │    │ • VM Lab        │    │ • ext4 Rootfs    │
+│ • SSH Server     │    │ • Custom Labs   │    │ • Network Ready  │
+│ • Network Tools  │    │                 │    │                  │
+└──────────────────┘    └─────────────────┘    └──────────────────┘
+         ▲
+         │
+         │              ┌─────────────────┐
+         └──────────────│  Init Setup     │
+                        │                 │
+                        │ • Download      │
+                        │ • Resize        │
+                        │ • Prepare       │
+                        └─────────────────┘
 ```
 
-## Lab Types
+## Components
 
-### Kubernetes Lab (`labs/k8_lab/`)
-- Pre-configured Kubernetes environment
-- kubectl, helm, and common tools
-- Sample manifests and exercises
+### 1. Base Image (`base_image/`)
 
-### VM Lab (`labs/vm_lab/`)
-- General-purpose virtual machine environment
-- Development tools and utilities
-- Customizable for various programming languages
+Ubuntu 22.04-based foundational image that serves as the base for all lab environments.
 
-### Custom Initrd Lab (`labs/custom-initrd/`)
-- Minimal custom Linux environment
-- Custom init process written in Go
-- Ultra-lightweight for specific use cases
+**Installed Packages**:
+- `systemd` - System and service manager (runs as PID 1)
+- `openssh-server` - SSH server for remote access
+- `udev` and `kmod` - Device management and kernel module loading
+- `iproute2`, `iputils-ping`, `net-tools` - Network configuration utilities
+- `curl`, `wget` - HTTP clients
+- `vim-tiny` - Text editor
+- `dbus` - Inter-process communication
+- `haveged`, `rng-tools` - Random number generation
+- `sudo` - Privilege escalation
+
+**Build Arguments**:
+- `OS_VERSION` - Ubuntu version (default: 22.04)
+
+**Usage**:
+```bash
+cd base_image
+docker build -t dozlab-base:latest .
+# Or with custom OS version
+docker build --build-arg OS_VERSION=20.04 -t dozlab-base:20.04 .
+```
+
+### 2. Init Setup (`init-setup/`)
+
+Alpine-based init container that downloads, prepares, and resizes rootfs images for Firecracker VMs. This container runs as an init container in Kubernetes before the Firecracker VM starts.
+
+**Purpose**:
+- Download pre-built rootfs images from remote URLs
+- Copy local development images to the correct location
+- Resize ext4 filesystem images to desired disk size
+- Prepare images for Firecracker VM consumption
+
+**Environment Variables**:
+- `IMAGE_PATH` - Destination path for the rootfs image (default: `/srv/vm/kernels/image.ext4`)
+- `LOCAL_DEV_IMAGE_PATH` - Local development image path (default: `/app/image.ext4`)
+- `IMAGE_DOWNLOAD_URL` - URL to fetch the rootfs image from (optional)
+- `IMAGE_SIZE` - Target disk size for the VM (default: `1G`)
+
+**Workflow**:
+1. Creates the image directory if it doesn't exist
+2. Attempts to move local image to destination (for development)
+3. If no local image and download URL provided, downloads from URL
+4. Runs `e2fsck` to check filesystem integrity
+5. Resizes the ext4 filesystem to specified size
+
+**Usage**:
+```bash
+cd init-setup
+docker build -t dozlab-init:latest .
+
+# Run with environment variables
+docker run --rm \
+  -v /path/to/disk:/srv/vm/kernels \
+  -e IMAGE_DOWNLOAD_URL="https://example.com/rootfs.ext4" \
+  -e IMAGE_SIZE="2G" \
+  dozlab-init:latest
+```
+
+### 3. Kubernetes Lab (`labs/k8_lab/`)
+
+Complete Kubernetes lab environment built on the base image with full K8s tooling and container runtime.
+
+**Installed Components**:
+- **Containerd** v1.7.19 - Container runtime with CNI plugins
+- **Kubernetes** v1.30 - kubeadm, kubelet, kubectl
+- **Linux Kernel** - `linux-image-virtual` for VM support
+- **Additional Tools**: cloud-init, dnsutils, jq, less
+
+**Configuration**:
+- Kernel modules for networking: `overlay`, `br_netfilter`
+- Sysctl parameters for Kubernetes networking
+- Containerd configured as container runtime
+- Kubelet configured to use containerd via CRI
+- systemd units enabled for containerd and kubelet
+- Root password: `root` (for console access)
+
+**Build Arguments**:
+- `TAG` - Base image tag (default: `test`)
+- `ARCH` - Architecture (default: `amd64`)
+- `CONTAINERD_VERSION` - Containerd version (default: `1.7.19`)
+- `KUBERNETES_VERSION` - K8s version (default: `1.30`)
+
+**Usage**:
+```bash
+cd labs/k8_lab
+docker build -t dozlab-k8s:latest .
+
+# With custom versions
+docker build \
+  --build-arg TAG=latest \
+  --build-arg KUBERNETES_VERSION=1.29 \
+  -t dozlab-k8s:1.29 .
+```
+
+### 4. VM Lab (`labs/vm_lab/`)
+
+Minimal general-purpose VM environment for basic use cases.
+
+**Configuration**:
+- Machine ID cleared (for unique VM instances)
+- SSH server configured (locale warnings disabled)
+- Root password: `root` (for console access)
+- Root SSH directory prepared
+
+**Build Arguments**:
+- `TAG` - Base image tag (default: `test`)
+
+**Usage**:
+```bash
+cd labs/vm_lab
+docker build -t dozlab-vm:latest .
+```
+
+### 5. Custom Initrd Lab (`labs/custom-initrd/`)
+
+Reserved for future custom init system implementations.
 
 ## Getting Started
 
 ### Prerequisites
 
-- Docker
-- Make (optional, for build automation)
-- Root access (for some operations)
+- Docker or compatible container runtime
+- Make (each component has its own Makefile)
+- For init-setup: Volume mount point for disk images
 
-### Building Lab Images
+### Building Images
 
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd dozlab-rootfs-manager
-```
+Each component can be built independently using Docker or Make:
 
-2. Build base image:
+#### 1. Build Base Image First
+
+The base image is required for all lab environments:
+
 ```bash
 cd base_image
 docker build -t dozlab-base:latest .
 ```
 
-3. Build specific lab environments:
+#### 2. Build Init Setup Container
+
 ```bash
-# Kubernetes lab
-cd labs/k8_lab
-docker build -t dozlab-k8s-lab:latest .
-
-# VM lab
-cd labs/vm_lab
-docker build -t dozlab-vm-lab:latest .
-
-# Custom initrd lab
-cd labs/custom-initrd
-docker build -t dozlab-custom-initrd:latest .
+cd init-setup
+docker build -t dozlab-init:latest .
 ```
 
-### Quick Start with Make
+#### 3. Build Lab Images
+
+Lab images depend on the base image. Make sure to push the base image to a registry or use local tags:
 
 ```bash
-# Build all lab images
-make build-all
+# Kubernetes Lab
+cd labs/k8_lab
+docker build --build-arg TAG=latest -t dozlab-k8s:latest .
 
-# Build specific lab
-make build-k8s
-make build-vm
-make build-custom
+# VM Lab
+cd labs/vm_lab
+docker build --build-arg TAG=latest -t dozlab-vm:latest .
+```
 
-# Clean up images
-make clean
+### Using Make
+
+Each component includes a Makefile for build automation:
+
+```bash
+# In each directory (base_image, labs/k8_lab, labs/vm_lab, etc.)
+make          # Shows available targets
+make build    # Builds the image
+make push     # Pushes to registry (configure registry in Makefile)
 ```
 
 ## Directory Structure
 
 ```
-├── base_image/          # Base container image
-│   ├── Dockerfile
-│   └── setup-scripts/
-├── init-setup/          # Initialization scripts
-│   ├── Dockerfile
-│   └── init-scripts/
-├── labs/               # Lab-specific configurations
-│   ├── k8_lab/         # Kubernetes lab environment
-│   │   ├── Dockerfile
-│   │   ├── manifests/
-│   │   └── exercises/
-│   ├── vm_lab/         # General VM lab
-│   │   ├── Dockerfile
-│   │   ├── tools/
-│   │   └── configs/
-│   └── custom-initrd/  # Custom init system
-│       ├── Dockerfile
-│       ├── init/       # Go init process
-│       └── rootfs/
-└── Makefile           # Build automation
+dozlab-rootfs-manager/
+├── base_image/              # Ubuntu 22.04 base image
+│   └── Dockerfile          # Base image definition
+├── init-setup/             # Init container for rootfs preparation
+│   ├── Dockerfile          # Alpine-based init container
+│   ├── init.sh             # Rootfs download and resize script
+│   ├── local_create_image.sh  # Local image creation helper
+│   ├── README.md           # Init setup documentation
+│   └── disk/               # Directory for local disk images
+└── labs/                   # Lab environment images
+    ├── k8_lab/             # Kubernetes lab
+    │   ├── Dockerfile      # K8s lab image with kubeadm, containerd
+    │   └── Makefile        # Build automation
+    ├── vm_lab/             # General VM lab
+    │   ├── Dockerfile      # Minimal VM lab image
+    │   └── Makefile        # Build automation
+    └── custom-initrd/      # Reserved for custom init systems
+        ├── Dockerfile
+        └── Makefile
 ```
 
-## Lab Configurations
+## Converting Container Images to Rootfs
 
-### Kubernetes Lab
+To use these images with Firecracker, you need to convert them to ext4 filesystem images:
 
-**Features**:
-- Kubernetes 1.28+
-- kubectl, helm, k9s
-- Docker-in-Docker support
-- Sample deployments and services
+### Method 1: Using docker export
 
-**Configuration**:
-```dockerfile
-FROM dozlab-base:latest
-
-RUN apt-get update && apt-get install -y \
-    kubectl \
-    helm \
-    k9s \
-    docker.io
-
-COPY manifests/ /etc/kubernetes/manifests/
-COPY exercises/ /home/dozlab/exercises/
-
-EXPOSE 6443 8080
-```
-
-### VM Lab
-
-**Features**:
-- Multi-language development environment
-- Git, vim, curl, and common tools
-- SSH server for remote access
-- Customizable via environment variables
-
-**Configuration**:
-```dockerfile
-FROM dozlab-base:latest
-
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    python3 \
-    nodejs \
-    git \
-    vim \
-    openssh-server
-
-USER dozlab
-WORKDIR /home/dozlab
-
-EXPOSE 22 3000 8000
-```
-
-### Custom Initrd Lab
-
-**Features**:
-- Minimal Linux environment
-- Custom Go-based init system
-- Ultra-lightweight (< 50MB)
-- Firecracker MicroVM ready
-
-**Init Process** (`labs/custom-initrd/init/main.go`):
-```go
-func main() {
-    // Mount filesystems
-    mountFilesystems()
-    
-    // Start essential services
-    startServices()
-    
-    // Setup networking
-    configureNetwork()
-    
-    // Start user shell
-    startShell()
-}
-```
-
-## Custom Init System
-
-The custom initrd lab includes a Go-based init system:
-
-### Features
-- Fast boot time (< 2 seconds)
-- Minimal resource usage
-- Custom service management
-- Network configuration
-- User environment setup
-
-### Building
 ```bash
-cd labs/custom-initrd/init
-go build -o init main.go
+# Build your lab image
+docker build -t dozlab-k8s:latest labs/k8_lab/
+
+# Create a container (don't start it)
+docker create --name temp-container dozlab-k8s:latest
+
+# Export the container filesystem
+docker export temp-container | sudo tar -C /mnt/rootfs -xf -
+
+# Create ext4 image (adjust size as needed)
+dd if=/dev/zero of=rootfs.ext4 bs=1M count=4096
+mkfs.ext4 rootfs.ext4
+sudo mount rootfs.ext4 /mnt/rootfs
+# Copy files, then umount
+
+# Cleanup
+docker rm temp-container
 ```
 
-### Integration
-The init binary is embedded in the container and serves as PID 1:
-```dockerfile
-COPY init/init /sbin/init
-ENTRYPOINT ["/sbin/init"]
+### Method 2: Using init-setup Container
+
+The init-setup container can download and prepare pre-built rootfs images:
+
+```bash
+docker run --rm \
+  -v $(pwd)/disk:/srv/vm/kernels \
+  -e IMAGE_DOWNLOAD_URL="https://storage.googleapis.com/your-bucket/rootfs.ext4" \
+  -e IMAGE_SIZE="4G" \
+  dozlab-init:latest
 ```
 
 ## Firecracker Integration
 
-Support for running labs in Firecracker MicroVMs:
+These images are designed to run as rootfs in Firecracker MicroVMs:
 
-### VM Configuration
+### Example Firecracker Configuration
+
 ```json
 {
-    "boot-source": {
-        "kernel_image_path": "/var/lib/firecracker/kernel",
-        "boot_args": "console=ttyS0 reboot=k panic=1 pci=off"
-    },
-    "drives": [{
-        "drive_id": "rootfs",
-        "path_on_host": "/var/lib/firecracker/rootfs.ext4",
-        "is_root_device": true,
-        "is_read_only": false
-    }],
-    "machine-config": {
-        "vcpu_count": 2,
-        "mem_size_mib": 1024
+  "boot-source": {
+    "kernel_image_path": "/var/lib/firecracker/vmlinux",
+    "boot_args": "console=ttyS0 reboot=k panic=1 pci=off init=/lib/systemd/systemd"
+  },
+  "drives": [
+    {
+      "drive_id": "rootfs",
+      "path_on_host": "/srv/vm/kernels/image.ext4",
+      "is_root_device": true,
+      "is_read_only": false
     }
+  ],
+  "machine-config": {
+    "vcpu_count": 2,
+    "mem_size_mib": 2048
+  },
+  "network-interfaces": [
+    {
+      "iface_id": "eth0",
+      "guest_mac": "AA:FC:00:00:00:01",
+      "host_dev_name": "tap0"
+    }
+  ]
 }
 ```
 
-### Usage
-```bash
-# Start Firecracker VM with custom rootfs
-firecracker --api-sock /tmp/firecracker.socket --config-file vm-config.json
-```
+### Kubernetes Integration
 
-## Environment Variables
+In a Kubernetes environment, use the init-setup container as an init container:
 
-### Build-time Variables
-```bash
-# Base image configuration
-BASE_IMAGE=ubuntu:22.04
-DOZLAB_USER=dozlab
-DOZLAB_UID=1000
-
-# Lab-specific settings
-LAB_TYPE=k8s
-KUBERNETES_VERSION=1.28.0
-DOCKER_VERSION=24.0.0
-
-# Custom initrd settings
-INIT_BINARY_PATH=/sbin/init
-KERNEL_VERSION=6.1.0
-```
-
-### Runtime Variables
-```bash
-# Networking
-VM_IP=192.168.1.100
-GATEWAY=192.168.1.1
-DNS_SERVER=8.8.8.8
-
-# Services
-SSH_ENABLED=true
-DOCKER_ENABLED=true
-K8S_ENABLED=false
-
-# User settings
-USER_HOME=/home/dozlab
-SHELL=/bin/bash
-```
-
-## Image Tagging Strategy
-
-```bash
-# Version tags
-dozlab-k8s-lab:v1.0.0
-dozlab-vm-lab:v1.0.0
-dozlab-custom-initrd:v1.0.0
-
-# Latest tags
-dozlab-k8s-lab:latest
-dozlab-vm-lab:latest
-dozlab-custom-initrd:latest
-
-# Feature tags
-dozlab-k8s-lab:k8s-1.28
-dozlab-vm-lab:ubuntu-22.04
-dozlab-custom-initrd:go-1.21
-```
-
-## Testing
-
-### Image Testing
-```bash
-# Test image functionality
-docker run --rm -it dozlab-k8s-lab:latest kubectl version
-docker run --rm -it dozlab-vm-lab:latest python3 --version
-
-# Test custom init
-docker run --rm --privileged dozlab-custom-initrd:latest
-```
-
-### Integration Testing
-```bash
-# Test with Firecracker
-./test-firecracker.sh dozlab-custom-initrd:latest
-
-# Test in Kubernetes
-kubectl apply -f test-manifests/
-```
-
-## Security
-
-### Base Image Security
-- Regular security updates
-- Non-root user by default
-- Minimal package installation
-- Security scanning integration
-
-### Runtime Security
-```bash
-# Run as non-privileged user
-USER dozlab
-
-# Limit capabilities
-RUN setcap cap_net_bind_service=+ep /usr/bin/program
-
-# Read-only root filesystem
-docker run --read-only -v /tmp:/tmp:rw dozlab-lab:latest
-```
-
-## Monitoring
-
-### Image Metrics
-- Build time and size
-- Vulnerability scan results
-- Usage statistics
-- Performance benchmarks
-
-### Runtime Metrics
-- Boot time
-- Memory usage
-- CPU utilization
-- Network performance
-
-## Contributing
-
-1. Fork the repository
-2. Create a new lab type in `labs/your-lab/`
-3. Add Dockerfile and configuration
-4. Update Makefile with build targets
-5. Add documentation and tests
-6. Submit a pull request
-
-## Deployment
-
-### Registry Push
-```bash
-# Tag for registry
-docker tag dozlab-k8s-lab:latest your-registry.com/dozlab-k8s-lab:v1.0.0
-
-# Push to registry
-docker push your-registry.com/dozlab-k8s-lab:v1.0.0
-```
-
-### Kubernetes Deployment
 ```yaml
 apiVersion: v1
 kind: Pod
+metadata:
+  name: firecracker-lab
 spec:
+  initContainers:
+  - name: init-rootfs
+    image: dozlab-init:latest
+    env:
+    - name: IMAGE_DOWNLOAD_URL
+      value: "https://storage.googleapis.com/your-bucket/dozlab-k8s.ext4"
+    - name: IMAGE_SIZE
+      value: "4G"
+    - name: IMAGE_PATH
+      value: "/srv/vm/kernels/image.ext4"
+    volumeMounts:
+    - name: vm-disk
+      mountPath: /srv/vm/kernels
   containers:
-  - name: lab-environment
-    image: your-registry.com/dozlab-k8s-lab:v1.0.0
-    resources:
-      requests:
-        memory: "512Mi"
-        cpu: "500m"
-      limits:
-        memory: "2Gi" 
-        cpu: "2"
+  - name: firecracker
+    image: your-firecracker-image:latest
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - name: vm-disk
+      mountPath: /srv/vm/kernels
+  volumes:
+  - name: vm-disk
+    emptyDir: {}
 ```
+
+## Configuration Reference
+
+### Base Image Build Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `OS_VERSION` | `22.04` | Ubuntu version |
+
+### K8s Lab Build Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `TAG` | `test` | Base image tag |
+| `ARCH` | `amd64` | Architecture |
+| `CONTAINERD_VERSION` | `1.7.19` | Containerd version |
+| `KUBERNETES_VERSION` | `1.30` | Kubernetes version |
+
+### VM Lab Build Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `TAG` | `test` | Base image tag |
+
+### Init-Setup Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `IMAGE_PATH` | `/srv/vm/kernels/image.ext4` | Destination path for rootfs |
+| `LOCAL_DEV_IMAGE_PATH` | `/app/image.ext4` | Local development image path |
+| `IMAGE_DOWNLOAD_URL` | (empty) | URL to download rootfs from |
+| `IMAGE_SIZE` | `1G` | Target disk size |
+
+## Testing and Validation
+
+### Testing Base Image
+
+```bash
+# Build and test base image
+cd base_image
+docker build -t dozlab-base:test .
+
+# Verify systemd and services
+docker run --rm -it --privileged dozlab-base:test /lib/systemd/systemd
+
+# Test SSH (in separate terminal)
+docker run -d -p 2222:22 --name test-base dozlab-base:test
+ssh root@localhost -p 2222  # password: root
+docker stop test-base && docker rm test-base
+```
+
+### Testing K8s Lab Image
+
+```bash
+cd labs/k8_lab
+docker build --build-arg TAG=test -t dozlab-k8s:test .
+
+# Verify Kubernetes tools
+docker run --rm dozlab-k8s:test kubeadm version
+docker run --rm dozlab-k8s:test kubectl version --client
+docker run --rm dozlab-k8s:test containerd --version
+```
+
+### Testing Init-Setup Container
+
+```bash
+cd init-setup
+docker build -t dozlab-init:test .
+
+# Test with local image
+mkdir -p test-disk
+docker run --rm \
+  -v $(pwd)/test-disk:/srv/vm/kernels \
+  -e IMAGE_SIZE="2G" \
+  dozlab-init:test
+
+# Verify the resized image exists
+ls -lh test-disk/image.ext4
+```
+
+### Testing with Firecracker
+
+```bash
+# 1. Convert your lab image to ext4 (see "Converting Container Images to Rootfs")
+# 2. Create Firecracker config (see "Firecracker Integration")
+# 3. Start Firecracker VM
+firecracker --api-sock /tmp/firecracker.sock --config-file config.json
+
+# 4. Access via console
+# Press Enter in the Firecracker console
+# Login: root / root
+```
+
+## Image Registry
+
+### Tagging Convention
+
+```bash
+# Base images
+dozlab-base:latest
+dozlab-base:22.04
+dozlab-base:20.04
+
+# Lab images
+dozlab-k8s:latest
+dozlab-k8s:k8s-1.30
+dozlab-k8s:k8s-1.29
+dozlab-vm:latest
+
+# Init container
+dozlab-init:latest
+```
+
+### Publishing to Registry
+
+```bash
+# Tag for your registry
+docker tag dozlab-base:latest your-registry.com/dozlab-base:latest
+docker tag dozlab-k8s:latest your-registry.com/dozlab-k8s:k8s-1.30
+docker tag dozlab-init:latest your-registry.com/dozlab-init:latest
+
+# Push to registry
+docker push your-registry.com/dozlab-base:latest
+docker push your-registry.com/dozlab-k8s:k8s-1.30
+docker push your-registry.com/dozlab-init:latest
+```
+
+## Troubleshooting
+
+### Common Issues
+
+#### Issue: Lab image fails to build - can't find base image
+
+**Solution**: Build and tag the base image first, or update the `TAG` build argument to match your base image tag:
+
+```bash
+cd base_image
+docker build -t dozman99/lab-base_image:test .
+```
+
+#### Issue: Init container fails to resize image
+
+**Solution**: Check that the image path is writable and the filesystem is ext4. The container needs `e2fsprogs-extra` which is included in the Alpine image.
+
+#### Issue: Firecracker VM won't boot
+
+**Solution**:
+- Verify the kernel image path is correct
+- Check boot args include `init=/lib/systemd/systemd`
+- Ensure rootfs ext4 image is not corrupted
+- Verify machine-id files are cleared (done automatically in lab images)
+
+#### Issue: SSH connection refused in VM
+
+**Solution**:
+- Verify SSH service is enabled: `systemctl status sshd`
+- Check network configuration in Firecracker
+- Verify firewall rules allow SSH traffic
+
+## Development Workflow
+
+### Creating a New Lab Type
+
+1. Create new directory under `labs/`:
+```bash
+mkdir labs/my_new_lab
+cd labs/my_new_lab
+```
+
+2. Create Dockerfile based on base image:
+```dockerfile
+ARG TAG=latest
+FROM dozman99/lab-base_image:${TAG}
+
+# Install your tools
+RUN apt-get update && apt-get install -y \
+    your-tools \
+    your-packages
+
+# Configure environment
+RUN echo "" > /etc/machine-id && echo "" > /var/lib/dbus/machine-id
+RUN mkdir -m 0700 -p /root/.ssh
+RUN echo "root:root" | chpasswd
+```
+
+3. Create Makefile for build automation
+4. Test the image
+5. Convert to ext4 rootfs for Firecracker
+
+## Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes (new lab types, improvements, bug fixes)
+4. Test your changes thoroughly
+5. Submit a pull request with a clear description
 
 ## License
 
-[Add your license here]
+See LICENSE file for details.
