@@ -154,7 +154,54 @@ docker build -t dozlab-vm:latest .
 
 ### 5. Custom Initrd Lab (`labs/custom-initrd/`)
 
-Reserved for future custom init system implementations.
+Ultra-lightweight Alpine-based image with a custom Go init system for specialized use cases.
+
+**Purpose**:
+- Provide a minimal container runtime environment
+- Custom init process written in Go
+- Static binary compilation for portability
+- Suitable for MicroVM environments requiring minimal overhead
+
+**Build Process**:
+The lab uses a multi-stage Docker build:
+1. **Build Stage**: Uses `golang:1.20-alpine` to compile the Go init binary
+2. **Runtime Stage**: Uses `alpine:3.18` with minimal utilities
+
+**Installed Components**:
+- `curl` - HTTP client
+- `ca-certificates` - SSL certificate management
+- `htop` - Process monitoring
+
+**Build Configuration**:
+- Go build flags: `--tags netgo --ldflags '-s -w -extldflags "-lm -lstdc++ -static"'`
+- Static linking for standalone binary
+- Strips debug symbols for minimal size
+
+**Directory Structure**:
+```
+labs/custom-initrd/
+├── Dockerfile          # Multi-stage build definition
+├── Makefile           # Build automation with local and container builds
+├── init/              # Go source code for init process (not tracked in git)
+│   └── main.go        # Custom init implementation
+└── .gitignore         # Excludes built binaries
+```
+
+**Usage**:
+```bash
+cd labs/custom-initrd
+
+# Build the image (requires init/main.go to exist)
+make build
+
+# Or build locally for testing
+make init-local
+
+# Push to registry
+make push
+```
+
+**Note**: The `init/` directory containing the Go source code (`main.go`) must be created separately and is not tracked in git per the `.gitignore` configuration. The init binary serves as PID 1 in the container.
 
 ## Getting Started
 
@@ -196,6 +243,10 @@ docker build --build-arg TAG=latest -t dozlab-k8s:latest .
 # VM Lab
 cd labs/vm_lab
 docker build --build-arg TAG=latest -t dozlab-vm:latest .
+
+# Custom Initrd Lab (requires init/main.go to be present)
+cd labs/custom-initrd
+make build
 ```
 
 ### Using Make
@@ -228,9 +279,12 @@ dozlab-rootfs-manager/
     ├── vm_lab/             # General VM lab
     │   ├── Dockerfile      # Minimal VM lab image
     │   └── Makefile        # Build automation
-    └── custom-initrd/      # Reserved for custom init systems
-        ├── Dockerfile
-        └── Makefile
+    └── custom-initrd/      # Custom Go-based init system
+        ├── Dockerfile      # Multi-stage build for Go init
+        ├── Makefile        # Build automation
+        ├── .gitignore      # Excludes init binaries
+        └── init/           # Go source code (not tracked in git)
+            └── main.go     # Custom init implementation
 ```
 
 ## Converting Container Images to Rootfs
@@ -364,6 +418,19 @@ spec:
 |----------|---------|-------------|
 | `TAG` | `test` | Base image tag |
 
+### Custom Initrd Lab Build Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REGISTRY` | `docker.io/dozman99` | Container registry |
+| `IMAGE_NAME` | `$(REGISTRY)/lab-custom-initrd-os` | Full image name |
+| `TAG` | `$(git rev-parse --short HEAD)` | Image tag (git commit hash) |
+
+**Makefile Targets**:
+- `make build` - Build the Docker image with multi-stage build
+- `make push` - Push image to registry
+- `make init-local` - Build init binary locally for testing
+
 ### Init-Setup Environment Variables
 
 | Variable | Default | Description |
@@ -420,6 +487,21 @@ docker run --rm \
 ls -lh test-disk/image.ext4
 ```
 
+### Testing Custom Initrd Lab
+
+```bash
+cd labs/custom-initrd
+
+# Build init binary locally
+make init-local
+
+# Build container image (requires init/main.go)
+make build
+
+# Test the container
+docker run --rm -it dozman99/lab-custom-initrd-os:$(git rev-parse --short HEAD)
+```
+
 ### Testing with Firecracker
 
 ```bash
@@ -449,6 +531,10 @@ dozlab-k8s:k8s-1.30
 dozlab-k8s:k8s-1.29
 dozlab-vm:latest
 
+# Custom initrd
+dozman99/lab-custom-initrd-os:latest
+dozman99/lab-custom-initrd-os:<git-sha>
+
 # Init container
 dozlab-init:latest
 ```
@@ -459,12 +545,18 @@ dozlab-init:latest
 # Tag for your registry
 docker tag dozlab-base:latest your-registry.com/dozlab-base:latest
 docker tag dozlab-k8s:latest your-registry.com/dozlab-k8s:k8s-1.30
+docker tag dozlab-vm:latest your-registry.com/dozlab-vm:latest
 docker tag dozlab-init:latest your-registry.com/dozlab-init:latest
 
 # Push to registry
 docker push your-registry.com/dozlab-base:latest
 docker push your-registry.com/dozlab-k8s:k8s-1.30
+docker push your-registry.com/dozlab-vm:latest
 docker push your-registry.com/dozlab-init:latest
+
+# Custom initrd uses Makefile for registry management
+cd labs/custom-initrd
+make push  # Pushes to registry configured in Makefile
 ```
 
 ## Troubleshooting
@@ -498,6 +590,33 @@ docker build -t dozman99/lab-base_image:test .
 - Verify SSH service is enabled: `systemctl status sshd`
 - Check network configuration in Firecracker
 - Verify firewall rules allow SSH traffic
+
+#### Issue: Custom initrd build fails - cannot find init/main.go
+
+**Solution**: The custom-initrd lab requires you to provide the Go source code for your custom init system:
+
+```bash
+cd labs/custom-initrd
+mkdir -p init
+# Create your init/main.go with your custom init implementation
+# Example structure:
+cat > init/main.go <<'EOF'
+package main
+
+import (
+    "fmt"
+    "os"
+)
+
+func main() {
+    fmt.Println("Custom init starting...")
+    // Your init logic here
+}
+EOF
+
+# Then build
+make build
+```
 
 ## Development Workflow
 
