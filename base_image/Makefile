@@ -3,10 +3,10 @@ BUILD_DATE:=$(shell date --rfc-3339=seconds)
 GIT_SHA:=$(shell git rev-parse HEAD)
 
 REGISTRY?=docker.io/dozman99
-IMAGE_NAME?=$(REGISTRY)/lab-base_image
+IMAGE_NAME?=$(REGISTRY)/dozlab-base
 TAG?=$(shell git rev-parse --short HEAD)
 
-OS_VERSION?=22.04# RELEASE follows the UBUNTU release
+OS_VERSION?=22.04 # RELEASE follows the UBUNTU release
 
 
 build:
