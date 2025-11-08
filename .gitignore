@@ -50,9 +50,10 @@ docker-compose.override.yml
 vmlinux*
 rootfs.ext4
 
-# Init binaries
-init
-custom-init
+# Init binaries (binary files only, not source directories)
+# Note: Specific .gitignore files in subdirectories handle their binaries
+**/init/init
+**/custom-init/custom-init
 
 # Test artifacts
 test-results/
