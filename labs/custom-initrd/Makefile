@@ -6,7 +6,7 @@ BUILD_DATE:=$(shell date --rfc-3339=seconds)
 GIT_SHA:=$(shell git rev-parse HEAD)
 
 REGISTRY?=docker.io/dozman99
-IMAGE_NAME?=$(REGISTRY)/lab-custom-initrd-os
+IMAGE_NAME?=$(REGISTRY)/dozlab-custom-initrd
 TAG?=$(shell git rev-parse --short HEAD)
 
 

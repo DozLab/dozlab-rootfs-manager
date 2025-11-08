@@ -7,7 +7,7 @@ BUILD_DATE:=$(shell date --rfc-3339=seconds)
 GIT_SHA:=$(shell git rev-parse HEAD)
 
 REGISTRY?=docker.io/dozman99
-IMAGE_NAME?=$(REGISTRY)/lab-vm-os
+IMAGE_NAME?=$(REGISTRY)/dozlab-vm
 TAG?=$(shell git rev-parse --short HEAD)
 
 OS_VERSION?=22.04 # RELEASE follows the kubernetes release

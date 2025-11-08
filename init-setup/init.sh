@@ -16,21 +16,28 @@ echo "Ensuring image folder $IMAGE_FOLDER"
 mkdir -p $IMAGE_FOLDER
 mv ${LOCAL_DEV_IMAGE_PATH} ${IMAGE_PATH} || echo "No resource found locally, validate download process"
 
-if [ ! -f "$IMAGE_PATH" ] && [ -z "$IMAGE_DOWNLOAD_URL" ]; then
-    echo "Resizing Image using local image"
+# If image exists locally and no download URL specified, resize the existing image
+if [ -f "$IMAGE_PATH" ] && [ -z "$IMAGE_DOWNLOAD_URL" ]; then
+    echo "Resizing existing local image"
     e2fsck -y -f ${IMAGE_PATH}
     resize2fs $IMAGE_PATH $IMAGE_SIZE
     exit 0
 fi
 
+# If image doesn't exist, download it
+if [ ! -f "$IMAGE_PATH" ]; then
+    if [ -z "$IMAGE_DOWNLOAD_URL" ]; then
+        echo "Error: RootFS image not found at $IMAGE_PATH and no IMAGE_DOWNLOAD_URL provided"
+        exit 1
+    fi
 
+    echo "RootFS image not found: $IMAGE_PATH"
+    echo "Downloading from $IMAGE_DOWNLOAD_URL"
+    wget $IMAGE_DOWNLOAD_URL -O $IMAGE_PATH
+fi
 
-echo "RootFS image not found : $IMAGE_PATH"
-echo "Downloading $IMAGE_DOWNLOAD_URL"
-
-wget $IMAGE_DOWNLOAD_URL -O $IMAGE_PATH
-
-echo "Resizing Image to $IMAGE_DOWNLOAD_URL"
+# Resize the image
+echo "Resizing image to $IMAGE_SIZE"
 e2fsck -y -f ${IMAGE_PATH}
 resize2fs $IMAGE_PATH $IMAGE_SIZE
 exit 0

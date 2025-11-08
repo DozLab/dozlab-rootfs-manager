@@ -1,5 +1,5 @@
 ARG TAG=test
-FROM dozman99/lab-base_image:${TAG}
+FROM dozman99/dozlab-base:${TAG}
 # Create the following files, but unset them
 RUN echo "" > /etc/machine-id && echo "" > /var/lib/dbus/machine-id
 

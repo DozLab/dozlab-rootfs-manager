@@ -58,34 +58,37 @@ cd dozlab-rootfs-manager
 2. Build base image:
 ```bash
 cd base_image
-docker build -t dozlab-base:latest .
+make build
 ```
 
 3. Build specific lab environments:
 ```bash
 # Kubernetes lab
 cd labs/k8_lab
-docker build -t dozlab-k8s-lab:latest .
+make build
 
 # VM lab
 cd labs/vm_lab
-docker build -t dozlab-vm-lab:latest .
+make build
 
 # Custom initrd lab
 cd labs/custom-initrd
-docker build -t dozlab-custom-initrd:latest .
+make build
 ```
 
 ### Quick Start with Make
 
 ```bash
-# Build all lab images
+# Build all lab images (from repository root)
 make build-all
 
 # Build specific lab
 make build-k8s
 make build-vm
-make build-custom
+make build-custom-initrd
+
+# Push all images to registry
+make push-all
 
 # Clean up images
 make clean
@@ -121,101 +124,73 @@ make clean
 ### Kubernetes Lab
 
 **Features**:
-- Kubernetes 1.28+
-- kubectl, helm, k9s
-- Docker-in-Docker support
-- Sample deployments and services
+- Kubernetes 1.30
+- kubeadm, kubelet, kubectl
+- Containerd 1.7.19 runtime
+- Pre-configured for cluster deployment
+- Cloud-init support
 
 **Configuration**:
 ```dockerfile
-FROM dozlab-base:latest
+ARG TAG=test
+FROM dozman99/dozlab-base:${TAG}
+
+ARG KUBERNETES_VERSION=1.30
+ARG CONTAINERD_VERSION=1.7.19
 
 RUN apt-get update && apt-get install -y \
-    kubectl \
-    helm \
-    k9s \
-    docker.io
+    dnsutils \
+    cloud-init \
+    linux-image-virtual \
+    kubeadm \
+    kubelet \
+    kubectl
 
-COPY manifests/ /etc/kubernetes/manifests/
-COPY exercises/ /home/dozlab/exercises/
-
-EXPOSE 6443 8080
+# Containerd is installed and configured
+# Kubelet is configured for containerd runtime
+# System is ready for kubeadm init/join
 ```
 
 ### VM Lab
 
 **Features**:
-- Multi-language development environment
-- Git, vim, curl, and common tools
-- SSH server for remote access
-- Customizable via environment variables
+- Minimal VM environment
+- Base Ubuntu system with systemd
+- SSH server pre-installed
+- Passwordless root access for labs
+- Locale-aware SSH configuration
 
 **Configuration**:
 ```dockerfile
-FROM dozlab-base:latest
+ARG TAG=test
+FROM dozman99/dozlab-base:${TAG}
 
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    python3 \
-    nodejs \
-    git \
-    vim \
-    openssh-server
-
-USER dozlab
-WORKDIR /home/dozlab
-
-EXPOSE 22 3000 8000
+# Machine ID cleared for VM cloning
+# SSH configured to disable locale forwarding
+# Passwordless root login enabled for lab access
 ```
 
 ### Custom Initrd Lab
 
 **Features**:
-- Minimal Linux environment
-- Custom Go-based init system
-- Ultra-lightweight (< 50MB)
-- Firecracker MicroVM ready
+- Minimal Alpine-based environment
+- Ultra-lightweight container
+- Can be exported as rootfs for VMs
+- Multi-stage build for Go applications
 
-**Init Process** (`labs/custom-initrd/init/main.go`):
-```go
-func main() {
-    // Mount filesystems
-    mountFilesystems()
-    
-    // Start essential services
-    startServices()
-    
-    // Setup networking
-    configureNetwork()
-    
-    // Start user shell
-    startShell()
-}
-```
-
-## Custom Init System
-
-The custom initrd lab includes a Go-based init system:
-
-### Features
-- Fast boot time (< 2 seconds)
-- Minimal resource usage
-- Custom service management
-- Network configuration
-- User environment setup
-
-### Building
-```bash
-cd labs/custom-initrd/init
-go build -o init main.go
-```
-
-### Integration
-The init binary is embedded in the container and serves as PID 1:
+**Configuration**:
 ```dockerfile
-COPY init/init /sbin/init
-ENTRYPOINT ["/sbin/init"]
+FROM golang:1.20-alpine AS build
+WORKDIR /go/src/
+COPY init .
+RUN go build --tags netgo --ldflags '-s -w -extldflags "-lm -lstdc++ -static"' -o init main.go
+
+FROM alpine:3.18
+RUN apk add --no-cache curl ca-certificates htop
+COPY --from=build /go/src/init /init
 ```
+
+**Note**: The `init` directory and Go-based init system are placeholders for custom initialization logic. You can implement custom init processes by creating the `init/main.go` file.
 
 ## Firecracker Integration
 
@@ -286,38 +261,40 @@ SHELL=/bin/bash
 ## Image Tagging Strategy
 
 ```bash
-# Version tags
-dozlab-k8s-lab:v1.0.0
-dozlab-vm-lab:v1.0.0
-dozlab-custom-initrd:v1.0.0
+# Git SHA tags (default)
+dozman99/dozlab-base:<git-sha>
+dozman99/dozlab-k8s:<git-sha>
+dozman99/dozlab-vm:<git-sha>
+dozman99/dozlab-custom-initrd:<git-sha>
 
-# Latest tags
-dozlab-k8s-lab:latest
-dozlab-vm-lab:latest
-dozlab-custom-initrd:latest
+# Version tags (manual)
+dozman99/dozlab-k8s:v1.0.0
+dozman99/dozlab-vm:v1.0.0
 
-# Feature tags
-dozlab-k8s-lab:k8s-1.28
-dozlab-vm-lab:ubuntu-22.04
-dozlab-custom-initrd:go-1.21
+# Feature tags (examples)
+dozman99/dozlab-k8s:k8s-1.30
+dozman99/dozlab-vm:ubuntu-22.04
 ```
 
 ## Testing
 
 ### Image Testing
 ```bash
-# Test image functionality
-docker run --rm -it dozlab-k8s-lab:latest kubectl version
-docker run --rm -it dozlab-vm-lab:latest python3 --version
+# Test Kubernetes lab
+docker run --rm -it dozman99/dozlab-k8s:<tag> kubeadm version
+docker run --rm -it dozman99/dozlab-k8s:<tag> kubectl version --client
 
-# Test custom init
-docker run --rm --privileged dozlab-custom-initrd:latest
+# Test VM lab
+docker run --rm -it dozman99/dozlab-vm:<tag> /bin/bash --version
+
+# Test custom initrd
+docker run --rm -it dozman99/dozlab-custom-initrd:<tag> /init
 ```
 
 ### Integration Testing
 ```bash
-# Test with Firecracker
-./test-firecracker.sh dozlab-custom-initrd:latest
+# Export rootfs for Firecracker
+docker export $(docker create dozman99/dozlab-custom-initrd:<tag>) | tar -C /tmp/rootfs -xf -
 
 # Test in Kubernetes
 kubectl apply -f test-manifests/
@@ -357,7 +334,7 @@ USER dozlab
 RUN setcap cap_net_bind_service=+ep /usr/bin/program
 
 # Read-only root filesystem
-docker run --read-only -v /tmp:/tmp:rw dozlab-lab:latest
+docker run --read-only -v /tmp:/tmp:rw dozman99/dozlab-vm:latest
 ```
 
 ## Monitoring
@@ -387,27 +364,30 @@ docker run --read-only -v /tmp:/tmp:rw dozlab-lab:latest
 
 ### Registry Push
 ```bash
-# Tag for registry
-docker tag dozlab-k8s-lab:latest your-registry.com/dozlab-k8s-lab:v1.0.0
+# Push all images (uses make)
+make push-all
 
-# Push to registry
-docker push your-registry.com/dozlab-k8s-lab:v1.0.0
+# Or push individually
+cd labs/k8_lab && make push
+cd labs/vm_lab && make push
 ```
 
 ### Kubernetes Deployment
 ```yaml
 apiVersion: v1
 kind: Pod
+metadata:
+  name: lab-environment
 spec:
   containers:
-  - name: lab-environment
-    image: your-registry.com/dozlab-k8s-lab:v1.0.0
+  - name: lab-k8s
+    image: dozman99/dozlab-k8s:latest
     resources:
       requests:
         memory: "512Mi"
         cpu: "500m"
       limits:
-        memory: "2Gi" 
+        memory: "2Gi"
         cpu: "2"
 ```
 

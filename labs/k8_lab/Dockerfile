@@ -1,5 +1,5 @@
 ARG TAG=test
-FROM dozman99/lab-base_image:${TAG}
+FROM dozman99/dozlab-base:${TAG}
 
 ARG ARCH="amd64"
 ARG CONTAINERD_VERSION=1.7.19

@@ -5,18 +5,18 @@ DOCKER := docker
 BUILD_DATE:=$(shell date --rfc-3339=seconds)
 GIT_SHA:=$(shell git rev-parse HEAD)
 
-CONTAINERD_VERSION?=1.5.9
-OS_VERSION?=22.04# RELEASE follows the UBUNTU release
+CONTAINERD_VERSION?=1.7.19
+OS_VERSION?=22.04 # RELEASE follows the UBUNTU release
 REGISTRY?=docker.io/dozman99
-IMAGE_NAME?=$(REGISTRY)/lab-k8-os
+IMAGE_NAME?=$(REGISTRY)/dozlab-k8s
 TAG?=$(shell git rev-parse --short HEAD)
 
-RELEASE_VERSIONS?=1.21.8 # 1.22.3 1.22.8 1.23.5 # RELEASE follows the kubernetes release
+KUBERNETES_VERSION?=1.30 # RELEASE follows the kubernetes release
 
 
 build:
 	$(DOCKER) build -t $(IMAGE_NAME):$(TAG)\
-		--build-arg KUBERNETES_VERSION=$(RELEASE_VERSIONS) \
+		--build-arg KUBERNETES_VERSION=$(KUBERNETES_VERSION) \
 		--build-arg TAG=$(TAG) --build-arg OS_VERSION=$(OS_VERSION) \
 		--build-arg CONTAINERD_VERSION=$(CONTAINERD_VERSION) \
 		--label "org.opencontainers.image.created"="$(BUILD_DATE)" \
