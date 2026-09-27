@@ -1,0 +1,10 @@
+# Firecracker lab networking: start-firecracker.sh (dozlab-infra) puts the tap device at
+# 172.16.0.1/24 and NATs the VM at 172.16.0.2.
+[Match]
+Name=eth0
+
+[Network]
+Address=172.16.0.2/24
+Gateway=172.16.0.1
+DNS=1.1.1.1
+DNS=8.8.8.8

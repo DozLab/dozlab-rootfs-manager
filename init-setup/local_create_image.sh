@@ -31,6 +31,18 @@ extract() {
     docker rm -f extract
 }
 
+# docker export captures files Docker bind-mounts at runtime, so the rootfs ends up with an
+# empty /etc/hostname, /etc/hosts and /etc/resolv.conf, and a /.dockerenv that makes systemd
+# in the VM believe it is in a container (skipping units such as haveged).
+fix_exported_rootfs() {
+    local root="$1"
+    rm -f "$root/.dockerenv"
+    echo "${VM_HOSTNAME:-dozlab-vm}" > "$root/etc/hostname"
+    printf '127.0.0.1 localhost\n127.0.1.1 %s\n::1 localhost ip6-localhost ip6-loopback\n' \
+        "${VM_HOSTNAME:-dozlab-vm}" > "$root/etc/hosts"
+    ln -sf ../run/systemd/resolve/stub-resolv.conf "$root/etc/resolv.conf"
+}
+
 # I will put this in a container because of permision
 # Create disk image
 create_image() {
@@ -43,6 +55,7 @@ create_image() {
     echo "Mounting image at $TMP..."
     mount -o loop "$IMAGE_PATH" "$TMP"
     tar -xvf rootfs.tar -C "$TMP"
+    fix_exported_rootfs "$TMP"
     echo "Unmounting image..."
     umount "$TMP"
 }
