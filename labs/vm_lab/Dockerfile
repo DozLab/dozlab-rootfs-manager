@@ -15,3 +15,12 @@ RUN mkdir -m 0700 -p /root/.ssh
 RUN passwd -d root && \
     # Allow passwordless login via console
     sed -i 's/nullok_secure/nullok/' /etc/pam.d/common-auth
+# Networking for Firecracker: static eth0 matching start-firecracker.sh's tap/NAT layout
+COPY files/10-eth0.network /etc/systemd/network/10-eth0.network
+
+# Always run the entropy daemon: without it sshd hangs at boot on the 4.14 guest kernel
+COPY files/haveged-vm.conf /etc/systemd/system/haveged.service.d/vm.conf
+
+# Key-only root SSH (keys are injected at runtime into /root/.ssh/authorized_keys)
+RUN sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config && \
+    systemctl enable systemd-networkd systemd-resolved haveged ssh serial-getty@ttyS0.service

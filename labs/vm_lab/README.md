@@ -85,6 +85,26 @@ SSH is pre-configured with locale forwarding disabled to avoid warnings:
 
 This prevents locale-related warnings when the container doesn't have locale packages installed.
 
+### Networking
+
+`files/10-eth0.network` gives `eth0` a static `172.16.0.2/24` with gateway `172.16.0.1`
+(DNS 1.1.1.1 / 8.8.8.8), matching the tap device and NAT that `start-firecracker.sh` in
+`dozlab-infra` sets up. `systemd-networkd` and `systemd-resolved` are enabled, so the VM is
+reachable over SSH as soon as it boots.
+
+### Boot Services
+
+The image enables `systemd-networkd`, `systemd-resolved`, `haveged`, `ssh` and
+`serial-getty@ttyS0` (the Firecracker console).
+
+`haveged` is required: the Firecracker guest kernel (4.14) never finishes seeding its random
+number generator on its own, and sshd blocks in `getrandom()` until it does, so without an
+entropy daemon SSH never comes up. `files/haveged-vm.conf` clears the unit's
+`ConditionVirtualization=!container`, because a rootfs made with `docker export` contains
+`/.dockerenv` and systemd would otherwise skip haveged. `init-setup/local_create_image.sh`
+also deletes `/.dockerenv` and writes `/etc/hostname`, `/etc/hosts` and a
+`/etc/resolv.conf` symlink, which `docker export` leaves empty.
+
 ### Root Access
 
 - **Console access**: root password set to `root`
@@ -377,12 +397,20 @@ docker run --privileged dozlab-vm:latest /lib/systemd/systemd
 
 ### Issue: Network not configured in Firecracker
 
-**Solution**: Configure networking in Firecracker config and set up interfaces in the VM:
+The image configures `eth0` statically (see [Networking](#networking)). If you run it with a
+different tap layout, edit `files/10-eth0.network` or configure the interface by hand:
 ```bash
 ip addr add 172.16.0.2/24 dev eth0
 ip link set eth0 up
 ip route add default via 172.16.0.1
 ```
+
+### Issue: VM boots but SSH never answers
+
+The console stops at "Starting OpenBSD Secure Shell server..." and the kernel log never shows
+`random: crng init done`. The kernel's RNG is not seeded, so check that `haveged` started
+(it logs "Started Entropy Daemon based on the HAVEGE algorithm") and that the rootfs has no
+`/.dockerenv`.
 
 ## Comparison with Other Labs
 
