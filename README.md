@@ -86,10 +86,13 @@ Alpine-based init container that downloads, prepares, and resizes rootfs images 
 
 **Usage**:
 ```bash
-cd base_image
-make build
-cd init-setup
-docker build -t dozlab-init:latest .
+# Build base -> VM lab -> ext4 rootfs -> init-setup with the rootfs baked in (needs sudo for
+# the loop mount). The image is shrunk to its contents (~350M for the VM lab), and init.sh
+# grows it to IMAGE_SIZE when the session starts.
+make build-init
+
+# Local cluster only: also bake a public key into /root/.ssh/authorized_keys
+make build-init TAG=local AUTHORIZED_KEYS=~/.ssh/lab_ed25519.pub
 
 # Run with environment variables
 docker run --rm \
