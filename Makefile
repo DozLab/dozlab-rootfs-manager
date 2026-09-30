@@ -32,7 +32,7 @@ build-base:
 	$(MAKE) -C base_image build
 
 # Build Kubernetes lab
-build-k8s: build-base
+build-k8s: build-vm
 	@echo "Building Kubernetes lab image..."
 	$(MAKE) -C labs/k8_lab build
 
