@@ -1,25 +1,33 @@
+.PHONY: build build-no-image push
+
 DOCKER := docker
 BUILD_DATE:=$(shell date --rfc-3339=seconds)
 GIT_SHA:=$(shell git rev-parse HEAD)
 
 REGISTRY?=docker.io/dozman99
-IMAGE_NAME?=$(REGISTRY)/init-setup
 TAG?=$(shell git rev-parse --short HEAD)
 
+# Which lab's image becomes the VM rootfs: vm, k8s or custom-initrd (build it first, e.g.
+# make build-vm at the repo root)
+LAB?=vm
+LAB_IMAGE?=$(REGISTRY)/dozlab-$(LAB):$(TAG)
+IMAGE_NAME?=$(REGISTRY)/dozlab-init-$(LAB)
+# Optional public key file baked in for root; local clusters only, never for pushed images
+AUTHORIZED_KEYS?=
+
 build:
-	# ./local_create_image.sh && \
-	mkdir ./disk && \
 	$(DOCKER) build -t $(IMAGE_NAME):$(TAG) \
-	    --build-arg OS_VERSION=$(OS_VERSION) \
+		--build-arg LAB_IMAGE=$(LAB_IMAGE) \
+		$(if $(AUTHORIZED_KEYS),--build-arg AUTHORIZED_KEY="$$(cat $(AUTHORIZED_KEYS))") \
 		--label "org.opencontainers.image.created"="$(BUILD_DATE)" \
-		--label "org.opencontainers.image.authors"="Liquid Metal Authors" \
-		--label "org.opencontainers.image.url"="https://github.com/weaveworks-liquidmetal/image-builder" \
-		--label "org.opencontainers.image.source"="https://github.com/weaveworks-liquidmetal/image-builder/tree/main/capmvm/kubernetes" \
+		--label "org.opencontainers.image.source"="https://github.com/DozLab/dozlab-rootfs-manager" \
 		--label "org.opencontainers.image.revision"="$(GIT_SHA)" \
-		--label "org.opencontainers.image.vendor"="Weaveworks" \
-		--label "org.opencontainers.image.licenses"="MPL-2.0" \
-		--label "org.opencontainers.image.description"="A image to use for a microvm volume when creating a cluster using Cluster API Provider Microvm" \
-		--label "works.weave.liquidmetal.image_version"="$(OS_VERSION)" \
+		--label "org.opencontainers.image.description"="Init container with the $(LAB) lab rootfs baked in" \
 		.
+
+# Init container without a baked-in rootfs (sessions set IMAGE_DOWNLOAD_URL)
+build-no-image:
+	$(DOCKER) build -t $(REGISTRY)/dozlab-init:$(TAG) --target init .
+
 push:
 	$(DOCKER) push $(IMAGE_NAME):$(TAG)
