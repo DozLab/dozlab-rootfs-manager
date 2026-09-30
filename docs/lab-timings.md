@@ -36,7 +36,7 @@ measurement method on both sides.
 |---|---|---|---|---|---|
 | **F1** | 1 | The init image baked in a **2 GiB ext4 that held only ~340 MiB of data**. `init-rootfs` copies the whole file into the pod on every session start (image layer → volume is a full copy), so users waited for 2 GiB of mostly empty blocks. | After building the ext4, run `e2fsck -f` and **`resize2fs -M`** to shrink the filesystem and the file to its contents (~350 MB). `init.sh` then **grows it to the session's disk size inside the pod** (`resize2fs <image> $IMAGE_SIZE`), which takes about a second. | First in `dozlab.sh` (local); now `init-setup/Dockerfile` (#6) | `init-rootfs` **16 s → 3–4 s** (cluster) |
 | **F3** | 2 | Making the rootfs used `docker export` + **loop mount + sudo**: it needed root, ran one lab at a time (all labs wrote `init-setup/disk/image.ext4`), was never cached, left mounts behind on failure, and had to undo Docker leftovers (`/.dockerenv`, empty `/etc/hostname`). | The init-setup **Dockerfile builds the ext4 itself**: a build stage bind-mounts the lab image, copies it with `cp -a`, writes hostname/hosts/resolv.conf, then **`mkfs.ext4 -d`** creates the filesystem straight from the directory (30% headroom), and `resize2fs -M` shrinks it. No mount, no sudo; Docker caches the result and labs build in parallel. | `init-setup/Dockerfile`, `make build-init LAB=<lab>` (#6) | vm: 16 s → **16.5 s cold / ~1.5 s cached**, 348 → **311 MB**, no sudo. k8s: ~67 s → **44.7 s**, 2.0 → **1.4 GB**. Smaller images also cut the init container: vm ~5 → **3.1 s**, k8s ~21 → **12.6 s** |
-| **F6** | 3 (planned) | The k8s rootfs is 1.4 GB, and the init container spends 12.6 s copying it. It includes **`linux-image-virtual` (a 5.15 kernel and modules) that Firecracker never uses**, since Firecracker boots its own kernel, and probably `cloud-init`. | Remove those packages and clean the apt caches in the k8s Dockerfile. | `labs/k8_lab/Dockerfile` | **Estimated, not measured:** ~200 MB removed, so rootfs 1.4 → ~1.2 GB, k8s init container **12.6 → ~10.6 s**, k8s session setup **15.5 → ~13.5 s** (about **2 s saved** per session start) |
+| **F6** | 3 (planned) | The k8s rootfs is 1.4 GB, and the init container spends 12.6 s copying it. It includes **`linux-image-virtual` (a 5.15 kernel and modules) that Firecracker never uses**, since Firecracker boots its own kernel. | Remove `linux-image-virtual` and clean the apt caches in the k8s Dockerfile. **Keep `cloud-init`**: it will deliver per-session setup (SSH key, hostname, lab files) from a seed disk. | `labs/k8_lab/Dockerfile` | **Estimated, not measured:** ~200 MB removed, so rootfs 1.4 → ~1.2 GB, k8s init container **12.6 → ~10.6 s**, k8s session setup **15.5 → ~13.5 s** (about **2 s saved** per session start) |
 | **F7** | 3 (planned) | Changing any early Dockerfile line re-downloads every apt package in later steps. That is most of the k8s lab's 159 s cold build. | `RUN --mount=type=cache,target=/var/cache/apt` (and `/var/lib/apt`) on the apt steps. | Lab Dockerfiles | Expected: faster rebuilds after a change; cold build unchanged. To be measured |
 
 **Changes without a fix behind them:** the vm Firecracker → SSH time went from ~4 s (iteration 1)
@@ -108,7 +108,7 @@ repeated runs confirm it.
 ### Iteration 3 (next): slim the k8s lab, faster rebuilds
 
 - **Planned fixes:** F6, F7.
-  - Remove `linux-image-virtual` (a 5.15 kernel Firecracker never uses) and `cloud-init` if unused
+  - Remove `linux-image-virtual` (a 5.15 kernel Firecracker never uses). Keep `cloud-init` for per-session setup
     from the k8s lab; clean apt caches. Setup time follows rootfs size (~1 s per 100 MB).
   - `RUN --mount=type=cache,target=/var/cache/apt` in the lab Dockerfiles, so package steps
     don't re-download after an earlier layer changes.
@@ -227,7 +227,7 @@ A cached rebuild of an unchanged image takes about 1–1.5 s.
 | Lab | Session setup target | Current | What it takes |
 |---|---|---|---|
 | vm | under 6 s | 5.5 s ✅ | Nothing |
-| k8s | under 10 s | 15.5 s ❌ | Shrink the disk image: remove `linux-image-virtual` (and `cloud-init` if unused). Fix the kubelet drop-in (`--container-runtime=remote` is rejected by kubelet 1.27+) so the lab works as a Kubernetes lab |
+| k8s | under 10 s | 15.5 s ❌ | Shrink the disk image: remove `linux-image-virtual` (keep `cloud-init`, needed for per-session setup). Fix the kubelet drop-in (`--container-runtime=remote` is rejected by kubelet 1.27+) so the lab works as a Kubernetes lab |
 | New labs | about 3 s boot + about 1 s per 100 MB of disk image | – | Keep the disk image lean; build on the vm lab so networking and SSH work |
 
 ## How these were measured
