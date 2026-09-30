@@ -8,6 +8,115 @@ regressions, and as the data source for a future timings dashboard.
 - Host: single x86_64 Ubuntu machine with KVM
 - Raw data: [`timings/20260930T070232-labs.jsonl`](timings/20260930T070232-labs.jsonl)
 
+## Iterations
+
+Each iteration is one round of changes, with the times it produced. Add a new iteration (and
+its raw run under `timings/`) every time a change is meant to make things faster, so progress
+stays visible.
+
+### Summary: session setup per iteration (lab start → VM answers SSH)
+
+| Iteration | Date | What changed | vm session setup | k8s session setup |
+|---|---|---|---|---|
+| 0 | before 2026-09-29 | Starting point: 2 GiB unshrunk rootfs, slow readiness probes | **30 s** (cluster) | never (no network/SSH) |
+| 1 | 2026-09-29 | Rootfs shrunk to its contents; faster readiness probes | **8–10 s** (cluster) · 9 s (Docker) | never (no network/SSH) |
+| 2 | 2026-09-30 | Rootfs built inside Docker (#6), k8s lab on the vm lab (#7), `init.sh` fails on errors (#5) | **5.5 s** (Docker) | **15.5 s** (Docker) |
+| 3 | next | Planned: slim the k8s rootfs, apt cache mounts | target < 6 s | target < 10 s |
+
+"Cluster" means a lab pod on the local k3s node, from pod created to Ready. "Docker" means the
+same init container and Firecracker image run directly in Docker (see
+[How these were measured](#how-these-were-measured)); it leaves out pod scheduling (~1–2 s).
+
+### Iteration 0: starting point
+
+- **Setup:** the init image baked in a 2 GiB ext4 that was mostly empty (~340 MiB of data).
+  `init-rootfs` copied all 2 GiB into the pod on every session start. The rootfs was made with
+  `docker export` + loop mount + sudo, one lab at a time. The k8s lab was built on the base image
+  and had no network or SSH under Firecracker.
+- **Times (cluster):** `init-rootfs` 16 s; pod created → Ready 30 s.
+- **Source:** measured on the local k3s node and reported in #4. No raw run was kept.
+
+### Iteration 1: shrink the rootfs, faster readiness
+
+- **Changes:** shrink the ext4 to its contents after building it (`resize2fs -M`; ~350 MB instead
+  of 2 GiB), then grow it to the disk size in the pod. Readiness probe every second during
+  startup (controller).
+- **Times (cluster, vm lab):**
+
+  | Stage | Run 1 | Run 2 |
+  |---|---|---|
+  | Schedule + sandbox | 1.0 s | 1.0 s |
+  | `init-rootfs` (copy, fsck, grow) | 3.0 s | 4.0 s |
+  | network-setup init container | 0.0 s | 1.0 s |
+  | Start Firecracker + sidecar containers | 1.8 s | 1.2 s |
+  | Tap + iptables + Firecracker API | 0.0 s | 0.1 s |
+  | Load kernel/rootfs, start instance | 0.1 s | 0.1 s |
+  | Guest kernel boot | 1.0 s | 1.0 s |
+  | systemd → sshd listening | 1.1 s | 1.1 s |
+  | Readiness probe notices sshd | 0.0 s | 0.4 s |
+  | **Pod created → Ready** | **8.0 s** | **10.0 s** |
+
+- **Times (Docker, same method as iteration 2):**
+
+  | Lab | Rootfs → init image | Rootfs size | Init container | Firecracker → SSH |
+  |---|---|---|---|---|
+  | vm | 16 s (sudo + loop mount) | 348 MB | ~5 s | ~4 s |
+  | k8s | ~67 s | 2.0 GB | ~21 s | never |
+
+- **Source:** cluster runs [`timings/20260929T122254-test.jsonl`](timings/20260929T122254-test.jsonl)
+  and [`timings/20260929T124538-test.jsonl`](timings/20260929T124538-test.jsonl). The Docker numbers
+  were measured on 2026-09-30 before switching to iteration 2; no raw run was kept.
+
+### Iteration 2: rootfs built in Docker, k8s lab on the vm lab
+
+- **Changes:** the init-setup Docker build makes the ext4 itself with `mkfs.ext4 -d` (no sudo,
+  no loop mount, cached by Docker, labs build in parallel; #6). The k8s lab is built on the vm lab,
+  so it gets networking and SSH (#7). `init.sh` fails on errors and uses `IMAGE_DOWNLOAD_URL` (#5).
+- **Times:** the [Results](#results-cold-build-no-docker-cache) tables below.
+- **Change from iteration 1 (Docker method):**
+
+  | Step | Iteration 1 | Iteration 2 | Change |
+  |---|---|---|---|
+  | vm rootfs → init image | 16 s, 348 MB, sudo | 16.5 s cold / ~1.5 s cached, 311 MB, no sudo | Same cold time, no sudo, cached rebuilds |
+  | vm init container | ~5 s | 3.1 s | −2 s |
+  | vm Firecracker → SSH | ~4 s | 2.4 s | −1.6 s |
+  | **vm session setup** | **~9 s** | **5.5 s** | **−40%** |
+  | k8s rootfs → init image | ~67 s, 2.0 GB | 44.7 s, 1.4 GB | −22 s, −30% size |
+  | k8s init container | ~21 s | 12.6 s | −8 s |
+  | k8s Firecracker → SSH | never | 2.9 s | Now usable |
+  | **k8s session setup** | **never** | **15.5 s** | **Now usable** |
+
+- **Source:** [`timings/20260930T070232-labs.jsonl`](timings/20260930T070232-labs.jsonl).
+- **Not yet measured:** the cluster (pod created → Ready) with iteration 2's images.
+
+### Iteration 3 (next): slim the k8s lab, faster rebuilds
+
+- **Planned changes:**
+  - Remove `linux-image-virtual` (a 5.15 kernel Firecracker never uses) and `cloud-init` if unused
+    from the k8s lab; clean apt caches. Setup time follows rootfs size (~1 s per 100 MB).
+  - `RUN --mount=type=cache,target=/var/cache/apt` in the lab Dockerfiles, so package steps
+    don't re-download after an earlier layer changes.
+  - Fix the kubelet drop-in (`--container-runtime=remote` is rejected by kubelet 1.27+).
+- **Targets:** k8s session setup under 10 s; k8s rootfs well under 1.4 GB; vm unchanged.
+- **Times:** fill in after the run.
+
+  | Step | Iteration 2 | Iteration 3 | Change |
+  |---|---|---|---|
+  | k8s lab image build (cold) | 159.3 s | | |
+  | k8s rootfs size | 1.4 GB | | |
+  | k8s init container | 12.6 s | | |
+  | **k8s session setup** | **15.5 s** | | |
+  | vm session setup | 5.5 s | | |
+
+### Later ideas (not scheduled)
+
+| Idea | Expected effect |
+|---|---|
+| Cache each lab's rootfs on the node and copy-on-write it per session | Init container close to 0 s for every lab |
+| Warm pool: keep booted sessions ready per lab | Users wait ~0 s; costs idle CPU/RAM |
+| Firecracker snapshots (resume instead of boot; `start-firecracker.sh` has the API calls) | Boot ~3 s → under 1 s |
+| Registry build cache in CI (`--cache-from/--cache-to`) | CI stops rebuilding the base from scratch |
+
 ## Two clocks: build time vs session setup
 
 Each lab goes through the same pipeline:
@@ -35,6 +144,8 @@ Each lab goes through the same pipeline:
 | **custom-initrd** (`labs/custom-initrd/`) | Demo of a minimal Alpine VM with its own Go init process | `alpine:3.18` | Not usable: Firecracker doesn't run its `/init` (no `init=/init` in the boot args), and it has no network or SSH, so neither users nor the terminal sidecar can reach it. Candidate for removal |
 
 ## Results (cold build, no Docker cache)
+
+Iteration 2, run `20260930T070232-labs`.
 
 ### Base image
 
@@ -103,23 +214,6 @@ A cached rebuild of an unchanged image takes about 1–1.5 s.
 | k8s | under 10 s | 15.5 s ❌ | Shrink the disk image: remove `linux-image-virtual` (and `cloud-init` if unused). Fix the kubelet drop-in (`--container-runtime=remote` is rejected by kubelet 1.27+) so the lab works as a Kubernetes lab |
 | New labs | about 3 s boot + about 1 s per 100 MB of disk image | – | Keep the disk image lean; build on the vm lab so networking and SSH work |
 
-## Before and after the build changes
-
-Measured with the same Docker boot setup, before and after #6 (rootfs built in Docker) and #7
-(k8s lab on the VM lab):
-
-| Step | Before | After |
-|---|---|---|
-| vm rootfs → init image | 16 s, 348 MB (sudo + loop mount) | 16.5–20 s cold / 4 s cached, 311 MB, no sudo |
-| k8s rootfs → init image | ~67 s, 2.0 GB | 42–45 s, 1.4–1.5 GB |
-| Init container, vm | ~5 s | ~3–4 s |
-| Init container, k8s | ~21 s | ~13–16 s |
-| vm: Firecracker start → SSH | ~4 s | ~2.4–3 s |
-| k8s: Firecracker start → SSH | never (no network or sshd) | ~2.9 s |
-
-For comparison, on the local k3s cluster (2026-09-29, before these changes) a vm lab pod went
-from created to Ready in 8–10 s, with 3–4 s of that in the init container.
-
 ## How these were measured
 
 Every lab is built and booted in Docker, without a cluster or sudo:
@@ -139,5 +233,12 @@ stage:
 {"run":"20260930T070232-labs","step":"setup: vm Firecracker start -> SSH","start":1790748246.492,"end":1790748248.874,"seconds":2.38,"status":"ok"}
 ```
 
-To add a new measurement, add its JSON lines to `docs/timings/` as `<run>.jsonl` and update the
-tables above. Keeping one file per run lets a dashboard compare runs over time.
+To record a new iteration:
+
+1. Make the change, then run `NO_CACHE=1 bash dozlab.sh labs` (cold) and, if possible, the
+   cluster test session (`bash dozlab.sh test`), which records a per-phase pod breakdown.
+2. Copy the run's lines from `~/.dozlab-local/timings.jsonl` to `docs/timings/<run>.jsonl`.
+3. Add an iteration section above, with what changed, the new times, the change from the
+   previous iteration, and the run file, and add a row to the summary table.
+
+One file per run lets a dashboard chart every iteration.

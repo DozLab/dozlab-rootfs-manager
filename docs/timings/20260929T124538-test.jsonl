@@ -1,0 +1,12 @@
+{"run":"20260929T124538-test","step":"Test lab session 'demo' in namespace dozlab-labs","start":1790682338.927,"end":1790682340.650,"seconds":1.72,"status":"ok"}
+{"run":"20260929T124538-test","step":"pod: schedule + sandbox","start":1790682340.000,"end":1790682341.000,"seconds":1.00,"status":"ok"}
+{"run":"20260929T124538-test","step":"pod: init-rootfs (copy, fsck, grow disk)","start":1790682341.000,"end":1790682345.000,"seconds":4.00,"status":"ok"}
+{"run":"20260929T124538-test","step":"pod: network-setup init container","start":1790682345.000,"end":1790682346.000,"seconds":1.00,"status":"ok"}
+{"run":"20260929T124538-test","step":"pod: start firecracker + sidecar containers","start":1790682346.000,"end":1790682347.190,"seconds":1.19,"status":"ok"}
+{"run":"20260929T124538-test","step":"vm: tap + iptables + Firecracker API","start":1790682347.190,"end":1790682347.311,"seconds":0.12,"status":"ok"}
+{"run":"20260929T124538-test","step":"vm: load kernel/rootfs, InstanceStart","start":1790682347.311,"end":1790682347.444,"seconds":0.13,"status":"ok"}
+{"run":"20260929T124538-test","step":"vm: guest kernel boot","start":1790682347.444,"end":1790682348.429,"seconds":0.99,"status":"ok"}
+{"run":"20260929T124538-test","step":"vm: systemd to sshd listening","start":1790682348.429,"end":1790682349.572,"seconds":1.14,"status":"ok"}
+{"run":"20260929T124538-test","step":"pod: readiness probe notices sshd","start":1790682349.572,"end":1790682350.000,"seconds":0.43,"status":"ok"}
+{"run":"20260929T124538-test","step":"pod: TOTAL created -> Ready","start":1790682340.000,"end":1790682350.000,"seconds":10.00,"status":"ok"}
+{"run":"20260929T124538-test","step":"Waiting for the microVM to boot (readiness = sshd answering inside the VM)","start":1790682340.650,"end":1790682350.606,"seconds":9.96,"status":"ok"}
