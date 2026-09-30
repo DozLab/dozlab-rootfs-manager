@@ -8,3 +8,7 @@ Address=172.16.0.2/24
 Gateway=172.16.0.1
 DNS=1.1.1.1
 DNS=8.8.8.8
+# The tap network is IPv4-only with no IPv6 router. Without this, networkd waits for a router
+# advertisement and "Wait for Network to be Configured" (which cloud-init and so sshd wait on)
+# takes ~13 s.
+IPv6AcceptRA=no

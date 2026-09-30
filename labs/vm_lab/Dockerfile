@@ -1,5 +1,14 @@
 ARG TAG=test
 FROM dozman99/dozlab-base:${TAG}
+
+# Per-session setup: the init container writes a NoCloud seed into /var/lib/cloud/seed/nocloud
+# (SSH key, hostname, optional user-data) and cloud-init applies it on first boot. Without a
+# seed, cloud-init finds no datasource and stays off.
+RUN apt-get update && apt-get install -y --no-install-recommends cloud-init && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+COPY files/cloud-init-dozlab.cfg /etc/cloud/cloud.cfg.d/90-dozlab.cfg
+
 # Create the following files, but unset them
 RUN echo "" > /etc/machine-id && echo "" > /var/lib/dbus/machine-id
 
@@ -21,6 +30,6 @@ COPY files/10-eth0.network /etc/systemd/network/10-eth0.network
 # Always run the entropy daemon: without it sshd hangs at boot on the 4.14 guest kernel
 COPY files/haveged-vm.conf /etc/systemd/system/haveged.service.d/vm.conf
 
-# Key-only root SSH (keys are injected at runtime into /root/.ssh/authorized_keys)
+# Key-only root SSH (cloud-init installs the session's key into /root/.ssh/authorized_keys)
 RUN sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config && \
     systemctl enable systemd-networkd systemd-resolved haveged ssh serial-getty@ttyS0.service
