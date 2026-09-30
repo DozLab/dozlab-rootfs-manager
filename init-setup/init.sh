@@ -35,8 +35,12 @@ write_seed() {
             echo 'users: []   # no default "ubuntu" user: the keys go to root'
             echo 'manage_etc_hosts: localhost'
             echo 'ssh_authorized_keys:'
+            # Skip blank lines (a key from a Secret ends with a newline). An `if`, not `&&`: a
+            # false test as the loop's last command would fail the script under set -e.
             printf '%s\n' "$SSH_AUTHORIZED_KEY" | while IFS= read -r key; do
-                [ -n "$key" ] && printf "  - '%s'\n" "$(printf '%s' "$key" | sed "s/'/''/g")"
+                if [ -n "$key" ]; then
+                    printf "  - '%s'\n" "$(printf '%s' "$key" | sed "s/'/''/g")"
+                fi
             done
         } > "$seed/user-data"
     fi
