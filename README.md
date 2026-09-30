@@ -33,6 +33,11 @@ Container and root filesystem management for lab environments, providing custom 
                         └─────────────────┘
 ```
 
+## Lab Timings
+
+Build and startup times for each lab, what each lab is for, and the per-lab targets are in
+[docs/lab-timings.md](docs/lab-timings.md). Raw measurements are in [docs/timings/](docs/timings/).
+
 ## Components
 
 ### 1. Base Image (`base_image/`)
