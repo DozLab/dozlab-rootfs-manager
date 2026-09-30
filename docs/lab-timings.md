@@ -16,16 +16,36 @@ stays visible.
 
 ### Summary: session setup per iteration (lab start → VM answers SSH)
 
-| Iteration | Date | What changed | vm session setup | k8s session setup |
+| Iteration | Date | Fixes applied (see [Fixes](#fixes-what-was-done-to-cut-the-time)) | vm session setup | k8s session setup |
 |---|---|---|---|---|
-| 0 | before 2026-09-29 | Starting point: 2 GiB unshrunk rootfs, slow readiness probes | **30 s** (cluster) | never (no network/SSH) |
-| 1 | 2026-09-29 | Rootfs shrunk to its contents; faster readiness probes | **8–10 s** (cluster) · 9 s (Docker) | never (no network/SSH) |
-| 2 | 2026-09-30 | Rootfs built inside Docker (#6), k8s lab on the vm lab (#7), `init.sh` fails on errors (#5) | **5.5 s** (Docker) | **15.5 s** (Docker) |
-| 3 | next | Planned: slim the k8s rootfs, apt cache mounts | target < 6 s | target < 10 s |
+| 0 | before 2026-09-29 | None: starting point | **30 s** (cluster) | never (no network/SSH) |
+| 1 | 2026-09-29 | F1 shrink the rootfs, F2 poll readiness every second | **8–10 s** (cluster) · 9 s (Docker) | never (no network/SSH) |
+| 2 | 2026-09-30 | F3 build the rootfs inside Docker, F4 build k8s on the vm lab, F5 make `init.sh` fail on errors | **5.5 s** (Docker) | **15.5 s** (Docker) |
+| 3 | next | F6–F8 (planned): slim the k8s rootfs, apt cache mounts, fix kubelet | target < 6 s | target < 10 s |
 
 "Cluster" means a lab pod on the local k3s node, from pod created to Ready. "Docker" means the
 same init container and Firecracker image run directly in Docker (see
 [How these were measured](#how-these-were-measured)); it leaves out pod scheduling (~1–2 s).
+
+### Fixes: what was done to cut the time
+
+Every fix, the problem it solved, and what it did to the times. "Before → after" uses the same
+measurement method on both sides.
+
+| Fix | Iteration | Problem (what made it slow or broken) | Fix (what was done) | Where | Before → after |
+|---|---|---|---|---|---|
+| **F1** | 1 | The init image baked in a **2 GiB ext4 that held only ~340 MiB of data**. `init-rootfs` copies the whole file into the pod on every session start (image layer → volume is a full copy), so users waited for 2 GiB of mostly empty blocks. | After building the ext4, run `e2fsck -f` and **`resize2fs -M`** to shrink the filesystem and the file to its contents (~350 MB). `init.sh` then **grows it to the session's disk size inside the pod** (`resize2fs <image> $IMAGE_SIZE`), which takes about a second. | First in `dozlab.sh` (local); now `init-setup/Dockerfile` (#6) | `init-rootfs` **16 s → 3–4 s** (cluster) |
+| **F2** | 1 | Readiness was checked slowly, so the pod reported Ready well after sshd was already answering. | A **startup probe on TCP port 22 every 1 s** (up to 120 tries) marks the pod Ready as soon as sshd listens. After that, the readiness probe runs every 10 s (sshd logs each probe). | Lab pod spec (`dozlab.sh` test pod, controller) | "Probe notices sshd" is now **0–0.4 s**. Together with F1: pod created → Ready **30 s → 8–10 s** (F2's share wasn't measured separately) |
+| **F3** | 2 | Making the rootfs used `docker export` + **loop mount + sudo**: it needed root, ran one lab at a time (all labs wrote `init-setup/disk/image.ext4`), was never cached, left mounts behind on failure, and had to undo Docker leftovers (`/.dockerenv`, empty `/etc/hostname`). | The init-setup **Dockerfile builds the ext4 itself**: a build stage bind-mounts the lab image, copies it with `cp -a`, writes hostname/hosts/resolv.conf, then **`mkfs.ext4 -d`** creates the filesystem straight from the directory (30% headroom), and `resize2fs -M` shrinks it. No mount, no sudo; Docker caches the result and labs build in parallel. | `init-setup/Dockerfile`, `make build-init LAB=<lab>` (#6) | vm: 16 s → **16.5 s cold / ~1.5 s cached**, 348 → **311 MB**, no sudo. k8s: ~67 s → **44.7 s**, 2.0 → **1.4 GB**. Smaller images also cut the init container: vm ~5 → **3.1 s**, k8s ~21 → **12.6 s** |
+| **F4** | 2 | The k8s lab was built **on the base image**, so it had none of the vm lab's boot setup: no eth0 config, sshd not enabled, no haveged (the 4.14 guest kernel never seeds its RNG, so sshd blocks forever). It booted to a login prompt nobody could reach. | Build the k8s lab **`FROM dozlab-vm`**, so it inherits the static eth0 config (172.16.0.2/24), sshd, haveged and the serial console. The duplicate root/SSH lines were dropped. | `labs/k8_lab/Dockerfile`, `build-k8s` depends on `build-vm` (#7) | k8s Firecracker → SSH: **never → 2.9 s**. k8s session setup: **never → 15.5 s** |
+| **F5** | 2 | `init.sh` ended with `exit 0` and had no `set -e`, so a failed download, fsck or resize still "succeeded". The VM then started on a missing or unresized disk, and it looked like a slow or broken boot. | `set -eu`; only `e2fsck` exit code 1 (errors corrected) is accepted; copies go through a temp file and rename. A failure now **stops the pod immediately** with a clear error. | `init-setup/init.sh` (#5) | **No time change** in the normal case. A broken disk fails right away instead of producing a VM that never becomes Ready |
+| **F6** | 3 (planned) | The k8s rootfs is 1.4 GB, and the init container spends 12.6 s copying it. It includes **`linux-image-virtual` (a 5.15 kernel and modules) that Firecracker never uses**, since Firecracker boots its own kernel, and probably `cloud-init`. | Remove those packages and clean the apt caches in the k8s Dockerfile. | `labs/k8_lab/Dockerfile` | Expected: ~1 s less per 100 MB removed. To be measured |
+| **F7** | 3 (planned) | Changing any early Dockerfile line re-downloads every apt package in later steps. That is most of the k8s lab's 159 s cold build. | `RUN --mount=type=cache,target=/var/cache/apt` (and `/var/lib/apt`) on the apt steps. | Lab Dockerfiles | Expected: faster rebuilds after a change; cold build unchanged. To be measured |
+| **F8** | 3 (planned) | The kubelet drop-in passes `--container-runtime=remote`, which kubelet 1.27+ rejects, so kubelet fails once `kubeadm init` runs. It's a correctness fix, needed for the k8s lab to be a working Kubernetes lab. | Remove the flag and keep `--container-runtime-endpoint`. | `labs/k8_lab/Dockerfile` | No time change expected |
+
+**Changes without a fix behind them:** the vm Firecracker → SSH time went from ~4 s (iteration 1)
+to 2.4 s (iteration 2), but no change targeted boot. Treat it as run-to-run variation until
+repeated runs confirm it.
 
 ### Iteration 0: starting point
 
@@ -38,7 +58,7 @@ same init container and Firecracker image run directly in Docker (see
 
 ### Iteration 1: shrink the rootfs, faster readiness
 
-- **Changes:** shrink the ext4 to its contents after building it (`resize2fs -M`; ~350 MB instead
+- **Fixes:** F1, F2. Shrink the ext4 to its contents after building it (`resize2fs -M`; ~350 MB instead
   of 2 GiB), then grow it to the disk size in the pod. Readiness probe every second during
   startup (controller).
 - **Times (cluster, vm lab):**
@@ -69,7 +89,7 @@ same init container and Firecracker image run directly in Docker (see
 
 ### Iteration 2: rootfs built in Docker, k8s lab on the vm lab
 
-- **Changes:** the init-setup Docker build makes the ext4 itself with `mkfs.ext4 -d` (no sudo,
+- **Fixes:** F3, F4, F5. The init-setup Docker build makes the ext4 itself with `mkfs.ext4 -d` (no sudo,
   no loop mount, cached by Docker, labs build in parallel; #6). The k8s lab is built on the vm lab,
   so it gets networking and SSH (#7). `init.sh` fails on errors and uses `IMAGE_DOWNLOAD_URL` (#5).
 - **Times:** the [Results](#results-cold-build-no-docker-cache) tables below.
@@ -79,7 +99,7 @@ same init container and Firecracker image run directly in Docker (see
   |---|---|---|---|
   | vm rootfs → init image | 16 s, 348 MB, sudo | 16.5 s cold / ~1.5 s cached, 311 MB, no sudo | Same cold time, no sudo, cached rebuilds |
   | vm init container | ~5 s | 3.1 s | −2 s |
-  | vm Firecracker → SSH | ~4 s | 2.4 s | −1.6 s |
+  | vm Firecracker → SSH | ~4 s | 2.4 s | −1.6 s (no fix targeted this; likely variation) |
   | **vm session setup** | **~9 s** | **5.5 s** | **−40%** |
   | k8s rootfs → init image | ~67 s, 2.0 GB | 44.7 s, 1.4 GB | −22 s, −30% size |
   | k8s init container | ~21 s | 12.6 s | −8 s |
@@ -91,7 +111,7 @@ same init container and Firecracker image run directly in Docker (see
 
 ### Iteration 3 (next): slim the k8s lab, faster rebuilds
 
-- **Planned changes:**
+- **Planned fixes:** F6, F7, F8.
   - Remove `linux-image-virtual` (a 5.15 kernel Firecracker never uses) and `cloud-init` if unused
     from the k8s lab; clean apt caches. Setup time follows rootfs size (~1 s per 100 MB).
   - `RUN --mount=type=cache,target=/var/cache/apt` in the lab Dockerfiles, so package steps
