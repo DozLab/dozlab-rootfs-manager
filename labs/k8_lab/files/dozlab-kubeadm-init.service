@@ -1,0 +1,18 @@
+[Unit]
+Description=DozLab: set up a single-node Kubernetes cluster on first boot
+Wants=network-online.target
+# After the network is up and cloud-init has set this session's hostname (the node name).
+# cloud-init.service, not cloud-init.target: the target is ordered after multi-user.target,
+# which this unit is part of, so ordering after it is a cycle and systemd drops this job.
+After=network-online.target containerd.service cloud-init.service
+ConditionPathExists=!/etc/kubernetes/admin.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/dozlab-kubeadm-init
+RemainAfterExit=yes
+# First boot pulls the control-plane images
+TimeoutStartSec=15min
+
+[Install]
+WantedBy=multi-user.target
