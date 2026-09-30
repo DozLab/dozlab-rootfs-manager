@@ -32,11 +32,14 @@ Each time is marked with where it was measured:
 | 0 | before 2026-09-29 | Starting point | 30 s (cluster) | – | – | – |
 | 1 | 2026-09-29 | Shrink the rootfs to its contents (F1); readiness probe every second | 8–10 s (cluster), ~9 s (Docker) | – | vm **−20 to −22 s** | One more build step (fsck + shrink); every session grows the disk at start (~1 s). The probe runs every second during startup |
 | 2 | 2026-09-30 | Build the rootfs inside Docker (F3); build the k8s lab on the vm lab | 5.5 s (Docker) | 15.5 s (Docker) | vm **−3.5 s**; k8s first measured | Cold build of the vm init image is no faster (16.5 s vs 16 s); the build needs twice the rootfs size in temp space. The k8s build now waits for the vm build |
-| 3 | 2026-09-30 | Per-session setup: cloud-init applies each session's SSH key and hostname and makes new host keys; init.sh writes the seed and still owns disk resizing; no IPv6 router discovery on eth0; no RSA host keys | 9.1–10.3 s (Docker) | not measured | vm **+3.6 to +4.8 s** | This is the cost of per-session setup: +51 MB rootfs (init container +0.4–1.6 s) and cloud-init runs before sshd (boot +3.2 s). The VM gets no IPv6 autoconfiguration (the lab network has none) and no RSA host key |
-| 4 | planned | Remove the unused `linux-image-virtual` from the k8s lab (F6); apt cache mounts (F7) | unchanged | ~13.5 s (estimate) | k8s **~−2 s** (estimate) | None expected: Firecracker never uses that kernel. F7 keeps an apt cache on the build machine |
+| 3 | 2026-09-30 | Per-session setup: cloud-init applies each session's SSH key and hostname and makes new host keys; init.sh writes the seed and still owns disk resizing; no IPv6 router discovery on eth0; no RSA host keys | 9.1–10.3 s (Docker) | 18.8 s (Docker) | vm **+3.6 to +4.8 s**; k8s **+3.3 s** | This is the cost of per-session setup: cloud-init runs before sshd (boot +3.2 s in both labs). The vm rootfs grows +51 MB (init container +0.4–1.6 s); the k8s lab already had cloud-init, so its rootfs and init container don't change. The VM gets no IPv6 autoconfiguration (the lab network has none) and no RSA host key |
+| 4 | planned | Remove the unused `linux-image-virtual` from the k8s lab (F6); apt cache mounts (F7) | unchanged | ~16.8 s (estimate) | k8s **~−2 s** (estimate) | None expected: Firecracker never uses that kernel. F7 keeps an apt cache on the build machine |
 
 **Net for the vm lab:** 30 s → 5.5 s (−24.5 s) by iteration 2, then +3.6 to +4.8 s in iteration
 3 to give every session its own key, hostname and host keys.
+
+**Net for the k8s lab:** 15.5 s when first measured (iteration 2), then +3.3 s in iteration 3 for
+per-session setup: 18.8 s.
 
 ## Stage by stage
 
@@ -50,8 +53,8 @@ time added. "First measured" means the stage has no earlier number to compare wi
 | base image | not measured | 67.8 s (first measured) | unchanged | unchanged |
 | vm lab image | not measured | 3.7 s (first measured) | 3.7 → ~44 s (**+40 s**): installs cloud-init | unchanged |
 | vm init image (lab → ext4) | 16 s (first measured) | 16 → 16.5 s cold (**+0.5 s**); cached rebuild ~1.5 s (**−14.5 s**) | 16.5 → ~17 s (**+0.5 s**): bigger rootfs | unchanged |
-| k8s lab image | – | 159.3 s (first measured) | not measured | faster rebuilds after a change (F7, to be measured) |
-| k8s init image | – | 44.7 s (first measured) | not measured | smaller rootfs (F6, to be measured) |
+| k8s lab image | – | 159.3 s (first measured) | 159.3 → 140.1 s (**−19.2 s**): no change aimed at it, likely download variation | faster rebuilds after a change (F7, to be measured) |
+| k8s init image | – | 44.7 s (first measured) | 44.7 → 43.6 s (**−1.1 s**): variation; rootfs unchanged at 1.4 GB | smaller rootfs (F6, to be measured) |
 
 ### Setup stages (paid every time a user starts a lab)
 
@@ -60,18 +63,18 @@ time added. "First measured" means the stage has no earlier number to compare wi
 | vm init container | 16 → 3–4 s, cluster (**−12 to −13 s**): 2 GiB → 348 MB to copy | ~5 → 3.1 s (**−1.9 s**): 348 → 311 MB | 3.1 → 3.5–4.7 s (**+0.4 to +1.6 s**): 311 → 362 MB | unchanged |
 | vm boot → SSH | not measured | ~4 → 2.4 s (**−1.6 s**): no change aimed at boot, likely run-to-run variation | 2.4 → 5.6 s (**+3.2 s**): cloud-init runs before sshd | unchanged |
 | vm pod created → Ready (cluster) | 30 → 8–10 s (**−20 to −22 s**) | not measured on the cluster | not measured on the cluster | – |
-| k8s init container | – | 12.6 s (first measured) | not measured | 12.6 → ~10.6 s (**~−2 s**, estimate) |
-| k8s boot → SSH | – | 2.9 s (first measured) | not measured | unchanged |
+| k8s init container | – | 12.6 s (first measured) | 12.6 → 12.7 s (**+0.1 s**): writing the seed | 12.7 → ~10.7 s (**~−2 s**, estimate) |
+| k8s boot → SSH | – | 2.9 s (first measured) | 2.9 → 6.1 s (**+3.2 s**): cloud-init runs before sshd | unchanged |
 
 ### What went up and what went down
 
 | | Went down | Went up |
 |---|---|---|
-| **Build** | vm init image rebuild −14.5 s once Docker caches it (iteration 2) | vm lab image +40 s and vm init image +0.5 s for cloud-init (iteration 3); vm init image cold +0.5 s (iteration 2) |
-| **Setup** | vm init container −12 to −13 s (iteration 1) and −1.9 s (iteration 2); vm boot −1.6 s (iteration 2, likely variation) | vm init container +0.4 to +1.6 s and vm boot +3.2 s for per-session setup (iteration 3) |
+| **Build** | vm init image rebuild −14.5 s once Docker caches it (iteration 2); k8s lab image −19.2 s and init image −1.1 s (iteration 3, variation: no change aimed at them) | vm lab image +40 s and vm init image +0.5 s for cloud-init (iteration 3); vm init image cold +0.5 s (iteration 2) |
+| **Setup** | vm init container −12 to −13 s (iteration 1) and −1.9 s (iteration 2); vm boot −1.6 s (iteration 2, likely variation) | vm init container +0.4 to +1.6 s, vm boot +3.2 s, k8s init container +0.1 s and k8s boot +3.2 s for per-session setup (iteration 3) |
 
-The iteration 3 build numbers come from one build of the per-session test branch (not a
-`NO_CACHE=1` run), so treat them as approximate.
+The iteration 3 vm build numbers come from one build of the per-session test branch (not a
+`NO_CACHE=1` run), so treat them as approximate. The k8s lab image was built with `--no-cache`.
 
 ## Per VM
 
@@ -92,10 +95,11 @@ rebuild of an unchanged image takes about 1–1.5 s.
 | Iteration | Rootfs size | Init container | Boot → SSH | Session setup | Change from previous |
 |---|---|---|---|---|---|
 | 2 | 1.4 GB | 12.6 s | 2.9 s | 15.5 s | First measured: built on the vm lab |
-| 4 (planned) | ~1.2 GB (estimate) | ~10.6 s (estimate) | ~2.9 s | ~13.5 s (estimate) | ~−2 s: no unused kernel to copy |
+| 3 | 1.4 GB | 12.7 s | 6.1 s | 18.8 s | +3.3 s: cloud-init runs before sshd (it was already installed, so the rootfs didn't grow) |
+| 4 (planned) | ~1.2 GB (estimate) | ~10.7 s (estimate) | ~6.1 s | ~16.8 s (estimate) | ~−2 s: no unused kernel to copy |
 
 Build (iteration 2, cold): base 67.8 s + vm lab 3.7 s + k8s lab 159.3 s + init image 44.7 s =
-**275.5 s (~4.6 min)**.
+**275.5 s (~4.6 min)**. Iteration 3: k8s lab 140.1 s (no cache) + init image 43.6 s, on top of the vm lab.
 
 ### custom-initrd lab
 
