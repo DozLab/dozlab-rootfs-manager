@@ -1,0 +1,14 @@
+{"run":"20260930T070232-labs","step":"Sources (worktrees in /home/dozman/.dozlab-local/src)","start":1790748152.134,"end":1790748153.657,"seconds":1.52,"status":"ok"}
+{"run":"20260930T070232-labs","step":"build: base","start":1790748153.659,"end":1790748221.445,"seconds":67.79,"status":"ok"}
+{"run":"20260930T070232-labs","step":"build: vm lab image","start":1790748221.455,"end":1790748225.180,"seconds":3.73,"status":"ok"}
+{"run":"20260930T070232-labs","step":"build: vm init image (rootfs)","start":1790748225.186,"end":1790748241.712,"seconds":16.53,"status":"ok"}
+{"run":"20260930T070232-labs","step":"setup: vm init container (copy + grow to 4G)","start":1790748243.028,"end":1790748246.091,"seconds":3.06,"status":"ok"}
+{"run":"20260930T070232-labs","step":"setup: vm Firecracker start -> SSH","start":1790748246.492,"end":1790748248.874,"seconds":2.38,"status":"ok"}
+{"run":"20260930T070232-labs","step":"build: k8s lab image","start":1790748249.228,"end":1790748408.558,"seconds":159.33,"status":"ok"}
+{"run":"20260930T070232-labs","step":"build: k8s init image (rootfs)","start":1790748408.564,"end":1790748453.305,"seconds":44.74,"status":"ok"}
+{"run":"20260930T070232-labs","step":"setup: k8s init container (copy + grow to 4G)","start":1790748454.597,"end":1790748467.218,"seconds":12.62,"status":"ok"}
+{"run":"20260930T070232-labs","step":"setup: k8s Firecracker start -> SSH","start":1790748467.630,"end":1790748470.506,"seconds":2.88,"status":"ok"}
+{"run":"20260930T070232-labs","step":"build: custom-initrd lab image","start":1790748470.857,"end":1790748477.348,"seconds":6.49,"status":"ok"}
+{"run":"20260930T070232-labs","step":"build: custom-initrd init image (rootfs)","start":1790748477.354,"end":1790748484.248,"seconds":6.89,"status":"ok"}
+{"run":"20260930T070232-labs","step":"setup: custom-initrd init container (copy + grow to 4G)","start":1790748485.515,"end":1790748486.511,"seconds":1.00,"status":"ok"}
+{"run":"20260930T070232-labs","step":"setup: custom-initrd Firecracker start -> SSH","start":1790748486.909,"end":1790748701.981,"seconds":215.07,"status":"failed"}
