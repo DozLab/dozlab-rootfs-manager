@@ -22,6 +22,7 @@ stays visible.
 | 1 | 2026-09-29 | F1 shrink the rootfs | **8–10 s** (cluster) · 9 s (Docker) | never (no network/SSH) |
 | 2 | 2026-09-30 | F3 build the rootfs inside Docker | **5.5 s** (Docker) | **15.5 s** (Docker) |
 | 3 | next | F6, F7 (planned): slim the k8s rootfs, apt cache mounts | target < 6 s | target < 10 s |
+| 4 | in progress | Per-session setup with cloud-init (SSH key, hostname per session) | **~9–10 s** (Docker) | not measured |
 
 "Cluster" means a lab pod on the local k3s node, from pod created to Ready. "Docker" means the
 same init container and Firecracker image run directly in Docker (see
@@ -123,6 +124,68 @@ repeated runs confirm it.
   | k8s init container | 12.6 s | | |
   | **k8s session setup** | **15.5 s** | | |
   | vm session setup | 5.5 s | | |
+
+### Iteration 4 (in progress): per-session setup with cloud-init
+
+**Goal:** every lab session gets its own setup inside the VM. Until now nothing per-session
+reached the VM: every session booted the same disk image, all sessions shared one SSH key
+(`lab-ssh-key`), and that key only worked because it was baked into local images.
+
+**How it works:**
+
+1. The vm lab installs `cloud-init`, restricted to the NoCloud datasource (no metadata-service
+   probing) and with its network config off (eth0 comes from `10-eth0.network`).
+2. The init container (`init.sh`) takes `SSH_AUTHORIZED_KEY`, `SESSION_ID`, `VM_HOSTNAME` and an
+   optional full `USER_DATA`. It writes `meta-data` and `user-data` into
+   `/var/lib/cloud/seed/nocloud/` inside the disk image with `debugfs`, which edits the ext4
+   without mounting it.
+3. On first boot, cloud-init applies the seed: root's authorized key, the hostname, and new SSH
+   host keys for this VM.
+4. Without a seed, cloud-init finds no datasource and stays off, so images used without
+   per-session setup behave as before.
+
+**Measured** (Docker, vm lab, one-off test script; no raw run in `timings/`):
+
+| Step | Iteration 2 | Iteration 4, first try | Iteration 4, after fixes |
+|---|---|---|---|
+| vm rootfs size | 311 MB | 362 MB (+51 MB: cloud-init and Python) | 362 MB |
+| Init container (copy, grow, write seed) | 3.1 s | 3.6 s | 3.5–4.7 s |
+| Firecracker start → SSH | 2.4 s | **16.9–17.9 s** | **5.6 s** |
+| **vm session setup** | **5.5 s** | **~21 s** | **~9–10 s** |
+| cloud-init result | not installed | `status: error` | no error (`running` at SSH time; final status not checked) |
+
+**Verified:**
+
+| Session | Logs in with its own key | Hostname | SSH host key |
+|---|---|---|---|
+| alice | yes | `lab-alice` | unique |
+| bob | yes | `lab-bob` | unique (differs from alice's) |
+| no seed | n/a (no key given) | `dozlab-vm` | from the image; cloud-init didn't run, sshd started |
+
+**What went wrong on the first try, and what was done:**
+
+| Problem | Cause | What was done |
+|---|---|---|
+| Boot to SSH took ~17 s instead of ~2.4 s | sshd waits for cloud-init, whose network stage waits for "Wait for Network to be Configured". That wait took ~13 s: the tap network is IPv4-only with no IPv6 router, and networkd waited for a router advertisement | `IPv6AcceptRA=no` in `labs/vm_lab/files/10-eth0.network` |
+| cloud-init reported `status: error` | cloud-init's resize module ran `resize2fs /dev/vda` inside the VM and it failed (cause not investigated) | `resize_rootfs: false` and `growpart: {mode: "off"}` in the cloud-init config |
+| Slower host key generation | cloud-init makes new host keys per VM, including RSA (the slow one) | `ssh_genkeytypes: [ed25519, ecdsa]` (not timed on its own) |
+
+The first two changes were tested together, so the drop from ~17 s to 5.6 s isn't split between
+them. The IPv6 wait is the likely cause of most of it.
+
+**Decisions:**
+
+| Question | Decision |
+|---|---|
+| Who resizes the VM disk to the session's size? | **`init.sh`**, before boot (decided). cloud-init must not resize |
+| Hostname per session: `lab-<sessionId>` or `dozlab-vm` for all? | Open |
+| Remove the shared `lab-ssh-key` setting, or keep it as a fallback? | Open |
+| Is ~3 s more boot time (2.4 → 5.6 s) acceptable, or investigate cloud-init's startup first? | Open |
+
+**Still to do:** the controller creates a key pair per session (a Secret owned by the session),
+passes the public key to the init container and the private key to the terminal sidecar, and
+needs RBAC for Secrets. Not measured yet: the k8s lab, and the cluster (pod created → Ready).
+The code is on branch `per-session-setup` (rootfs-manager) and isn't in a PR yet.
 
 ### Later ideas (not scheduled)
 
