@@ -105,6 +105,19 @@ entropy daemon SSH never comes up. `files/haveged-vm.conf` clears the unit's
 (`make build-init`) writes `/etc/hostname`, `/etc/hosts` and a `/etc/resolv.conf` symlink,
 which a container runtime normally provides.
 
+### Per-Session Setup (cloud-init)
+
+Each lab session gets its own setup inside the VM. The init container writes a cloud-init
+NoCloud seed into `/var/lib/cloud/seed/nocloud/` (see `init-setup/README.md`), and on first
+boot cloud-init installs the session's SSH key for root, sets the hostname and creates new SSH
+host keys for this VM (ed25519 and ecdsa). `files/cloud-init-dozlab.cfg` limits cloud-init to
+that seed, leaves networking to `10-eth0.network`, and turns off its resize (the init container
+grows the disk). Without a seed, cloud-init stays off.
+
+sshd starts after cloud-init has run, so the key is in place when SSH comes up. This adds about
+3 s to boot (see `docs/lab-timings.md`). `10-eth0.network` sets `IPv6AcceptRA=no`: the tap
+network has no IPv6 router, and waiting for one held cloud-init (and so sshd) for ~13 s.
+
 ### Root Access
 
 - **Console access**: root password set to `root`
