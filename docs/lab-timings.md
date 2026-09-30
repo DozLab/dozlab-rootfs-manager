@@ -38,6 +38,41 @@ Each time is marked with where it was measured:
 **Net for the vm lab:** 30 s → 5.5 s (−24.5 s) by iteration 2, then +3.6 to +4.8 s in iteration
 3 to give every session its own key, hostname and host keys.
 
+## Stage by stage
+
+How each stage moved from one iteration to the next. **Bold** is the change: − is time saved, + is
+time added. "First measured" means the stage has no earlier number to compare with.
+
+### Build stages (paid once per change)
+
+| Stage | 0 → 1 | 1 → 2 | 2 → 3 | 3 → 4 (planned) |
+|---|---|---|---|---|
+| base image | not measured | 67.8 s (first measured) | unchanged | unchanged |
+| vm lab image | not measured | 3.7 s (first measured) | 3.7 → ~44 s (**+40 s**): installs cloud-init | unchanged |
+| vm init image (lab → ext4) | 16 s (first measured) | 16 → 16.5 s cold (**+0.5 s**); cached rebuild ~1.5 s (**−14.5 s**) | 16.5 → ~17 s (**+0.5 s**): bigger rootfs | unchanged |
+| k8s lab image | – | 159.3 s (first measured) | not measured | faster rebuilds after a change (F7, to be measured) |
+| k8s init image | – | 44.7 s (first measured) | not measured | smaller rootfs (F6, to be measured) |
+
+### Setup stages (paid every time a user starts a lab)
+
+| Stage | 0 → 1 | 1 → 2 | 2 → 3 | 3 → 4 (planned) |
+|---|---|---|---|---|
+| vm init container | 16 → 3–4 s, cluster (**−12 to −13 s**): 2 GiB → 348 MB to copy | ~5 → 3.1 s (**−1.9 s**): 348 → 311 MB | 3.1 → 3.5–4.7 s (**+0.4 to +1.6 s**): 311 → 362 MB | unchanged |
+| vm boot → SSH | not measured | ~4 → 2.4 s (**−1.6 s**): no change aimed at boot, likely run-to-run variation | 2.4 → 5.6 s (**+3.2 s**): cloud-init runs before sshd | unchanged |
+| vm pod created → Ready (cluster) | 30 → 8–10 s (**−20 to −22 s**) | not measured on the cluster | not measured on the cluster | – |
+| k8s init container | – | 12.6 s (first measured) | not measured | 12.6 → ~10.6 s (**~−2 s**, estimate) |
+| k8s boot → SSH | – | 2.9 s (first measured) | not measured | unchanged |
+
+### What went up and what went down
+
+| | Went down | Went up |
+|---|---|---|
+| **Build** | vm init image rebuild −14.5 s once Docker caches it (iteration 2) | vm lab image +40 s and vm init image +0.5 s for cloud-init (iteration 3); vm init image cold +0.5 s (iteration 2) |
+| **Setup** | vm init container −12 to −13 s (iteration 1) and −1.9 s (iteration 2); vm boot −1.6 s (iteration 2, likely variation) | vm init container +0.4 to +1.6 s and vm boot +3.2 s for per-session setup (iteration 3) |
+
+The iteration 3 build numbers come from one build of the per-session test branch (not a
+`NO_CACHE=1` run), so treat them as approximate.
+
 ## Per VM
 
 ### vm lab: general-purpose Ubuntu VM
