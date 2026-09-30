@@ -1,5 +1,7 @@
 ARG TAG=test
-FROM dozman99/dozlab-base:${TAG}
+# Built on the VM lab so it boots under Firecracker the same way: eth0 config, sshd, haveged,
+# serial console and key-only root SSH all come from labs/vm_lab.
+FROM dozman99/dozlab-vm:${TAG}
 
 ARG ARCH="amd64"
 ARG CONTAINERD_VERSION=1.7.19
@@ -76,14 +78,6 @@ RUN echo '[Service] \nEnvironment="KUBELET_EXTRA_ARGS=--container-runtime=remote
 RUN systemctl enable kubelet
 
 
-# Create the following files, but unset them
+
+# Package installs above may have generated one; each VM should make its own
 RUN echo "" > /etc/machine-id && echo "" > /var/lib/dbus/machine-id
-
-RUN mkdir -m 0700 -p /root/.ssh
-
-# Enable passwordless login for root user (lab environment)
-# Remove password requirement for root account
-RUN passwd -d root && \
-    # Allow passwordless login via console
-    sed -i 's/nullok_secure/nullok/' /etc/pam.d/common-auth
-
