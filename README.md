@@ -86,10 +86,12 @@ Alpine-based init container that downloads, prepares, and resizes rootfs images 
 
 **Usage**:
 ```bash
-cd base_image
-make build
-cd init-setup
-docker build -t dozlab-init:latest .
+# Build base -> lab -> init image with that lab's rootfs baked in (no sudo: the ext4 is made
+# inside the Docker build with mkfs.ext4 -d, then shrunk to its contents)
+make build-init LAB=vm            # or LAB=k8s, LAB=custom-initrd
+
+# Local cluster only: also bake a public key into /root/.ssh/authorized_keys
+make build-init LAB=vm TAG=local AUTHORIZED_KEYS=~/.ssh/lab_ed25519.pub
 
 # Run with environment variables
 docker run --rm \
@@ -290,8 +292,7 @@ FROM dozman99/dozlab-base:${TAG}
 # SSH configured to disable locale forwarding
 # Passwordless root login enabled for lab access
 ```bash
-cd init-setup
-docker build -t dozlab-init:latest .
+make build-init LAB=vm
 ```
 
 #### 3. Build Lab Images
@@ -348,7 +349,6 @@ dozlab-rootfs-manager/
 ├── init-setup/             # Init container for rootfs preparation
 │   ├── Dockerfile          # Alpine-based init container
 │   ├── init.sh             # Rootfs download and resize script
-│   ├── local_create_image.sh  # Local image creation helper
 │   ├── README.md           # Init setup documentation
 │   └── disk/               # Directory for local disk images
 └── labs/                   # Lab environment images
@@ -554,15 +554,14 @@ docker run --rm dozlab-k8s:test containerd --version
 ### Testing Init-Setup Container
 
 ```bash
-cd init-setup
-docker build -t dozlab-init:test .
+make build-init LAB=vm TAG=test
 
 # Test with local image
 mkdir -p test-disk
 docker run --rm \
   -v $(pwd)/test-disk:/srv/vm/kernels \
   -e IMAGE_SIZE="2G" \
-  dozlab-init:test
+  dozman99/dozlab-init-vm:test
 
 # Verify the resized image exists
 ls -lh test-disk/image.ext4

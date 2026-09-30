@@ -101,9 +101,9 @@ The image enables `systemd-networkd`, `systemd-resolved`, `haveged`, `ssh` and
 number generator on its own, and sshd blocks in `getrandom()` until it does, so without an
 entropy daemon SSH never comes up. `files/haveged-vm.conf` clears the unit's
 `ConditionVirtualization=!container`, because a rootfs made with `docker export` contains
-`/.dockerenv` and systemd would otherwise skip haveged. `init-setup/local_create_image.sh`
-also deletes `/.dockerenv` and writes `/etc/hostname`, `/etc/hosts` and a
-`/etc/resolv.conf` symlink, which `docker export` leaves empty.
+`/.dockerenv` and systemd would otherwise skip haveged. The init-setup build
+(`make build-init`) writes `/etc/hostname`, `/etc/hosts` and a `/etc/resolv.conf` symlink,
+which a container runtime normally provides.
 
 ### Root Access
 

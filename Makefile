@@ -1,4 +1,4 @@
-.PHONY: help build-all build-base build-k8s build-vm build-custom-initrd clean push-all
+.PHONY: help build-all build-base build-k8s build-vm build-init build-custom-initrd clean push-all
 
 # Default target
 help:
@@ -10,6 +10,7 @@ help:
 	@echo "  make build-k8s           - Build Kubernetes lab image"
 	@echo "  make build-vm            - Build VM lab image"
 	@echo "  make build-custom-initrd - Build custom initrd lab image"
+	@echo "  make build-init LAB=vm   - Build a lab (vm, k8s, custom-initrd) and its init image with the rootfs baked in"
 	@echo "  make push-all            - Push all images to registry"
 	@echo "  make clean               - Remove all built images"
 	@echo ""
@@ -18,9 +19,11 @@ help:
 	@echo "  TAG              - Image tag (default: git SHA)"
 	@echo "  OS_VERSION       - Ubuntu version (default: 22.04)"
 	@echo "  KUBERNETES_VERSION - K8s version (default: 1.30)"
+	@echo "  LAB              - Lab baked into the init image (default: vm)"
+	@echo "  AUTHORIZED_KEYS  - Public key file baked into the init image (local clusters only)"
 
 # Build all images
-build-all: build-base build-k8s build-vm build-custom-initrd
+build-all: build-base build-k8s build-vm build-init build-custom-initrd
 	@echo "All images built successfully!"
 
 # Build base image
@@ -38,6 +41,13 @@ build-vm: build-base
 	@echo "Building VM lab image..."
 	$(MAKE) -C labs/vm_lab build
 
+# Build a lab and the init container with its rootfs baked in (the image the controller's
+# init-rootfs runs): make build-init LAB=k8s
+LAB?=vm
+build-init: build-$(LAB)
+	@echo "Building init image for the $(LAB) lab..."
+	$(MAKE) -C init-setup build LAB=$(LAB)
+
 # Build custom initrd lab
 build-custom-initrd:
 	@echo "Building custom initrd lab image..."
@@ -49,6 +59,7 @@ push-all:
 	$(MAKE) -C base_image push
 	$(MAKE) -C labs/k8_lab push
 	$(MAKE) -C labs/vm_lab push
+	$(MAKE) -C init-setup push
 	$(MAKE) -C labs/custom-initrd push
 	@echo "All images pushed successfully!"
 
