@@ -11,7 +11,6 @@ ARG KUBERNETES_VERSION=1.30
 RUN apt-get update && apt-get install -y \
         dnsutils \
         cloud-init \
-        linux-image-virtual \
         less \
         apt-transport-https \
         ca-certificates \
@@ -26,8 +25,8 @@ RUN apt-get update && apt-get install -y \
 
 
 #### Let iptables see bridged traffic ###
-RUN echo "overlay \n\
-br_netfilter" >> /etc/modules-load.d/containerd.conf
+# overlay and br_netfilter are built into the guest kernel (dozlab-infra), which has no module
+# support, so nothing is listed in /etc/modules-load.d.
 
 # Setup required sysctl params, these persist across reboots.
 RUN echo "net.bridge.bridge-nf-call-iptables  = 1 \n\
@@ -66,16 +65,25 @@ RUN apt-get update && apt-get install -y \
 
 RUN kubeadm version
 
-RUN mkdir -p /etc/containerd && containerd config default > /etc/containerd/config.toml
+# kubeadm sets the kubelet to the systemd cgroup driver, so containerd must use it too
+RUN mkdir -p /etc/containerd && containerd config default > /etc/containerd/config.toml && \
+    sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml && \
+    grep -q 'SystemdCgroup = true' /etc/containerd/config.toml
+# Pod network: the bridge plugin from the containerd tarball (/opt/cni/bin). One node, so no
+# overlay network (VXLAN) or CNI pods are needed. Matches kubeadm's --pod-network-cidr.
 RUN rm /etc/cni/net.d/10-containerd-net.conflist
+COPY files/10-dozlab-bridge.conflist /etc/cni/net.d/10-dozlab-bridge.conflist
 RUN systemctl enable containerd
 
 
-RUN mkdir -p  /etc/systemd/system/kubelet.service.d/
-RUN echo '[Service] \nEnvironment="KUBELET_EXTRA_ARGS=--container-runtime=remote --runtime-request-timeout=15m --container-runtime-endpoint=unix:///run/containerd/containerd.sock"' | tee /etc/systemd/system/kubelet.service.d/0-containerd.conf
-
-
+# No kubelet flags of our own: kubeadm writes the kubelet's config and runtime endpoint.
+# (The old drop-in passed --container-runtime=remote, removed in Kubernetes 1.27.)
 RUN systemctl enable kubelet
+
+# First boot: kubeadm init as a single-node cluster (see files/dozlab-kubeadm-init)
+COPY files/dozlab-kubeadm-init /usr/local/sbin/dozlab-kubeadm-init
+COPY files/dozlab-kubeadm-init.service /etc/systemd/system/dozlab-kubeadm-init.service
+RUN chmod 0755 /usr/local/sbin/dozlab-kubeadm-init && systemctl enable dozlab-kubeadm-init.service
 
 
 

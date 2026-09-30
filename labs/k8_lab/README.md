@@ -25,9 +25,10 @@ This lab image provides a production-ready Kubernetes environment suitable for:
 - CRI (Container Runtime Interface) configured
 
 ### Linux Kernel & System
-- `linux-image-virtual` - Optimized kernel for virtualized environments
-- `cloud-init` - Cloud instance initialization
-- Kernel modules: `overlay`, `br_netfilter`
+- The guest kernel comes from dozlab-infra's Firecracker image (Linux 6.1 built with the
+  netfilter features kube-proxy needs), not from this image
+- `cloud-init` - per-session setup (SSH key, hostname), see `labs/vm_lab`
+- `overlay` and `br_netfilter` are built into that kernel, so no modules are loaded
 
 ### Additional Tools
 - `dnsutils` - DNS troubleshooting (dig, nslookup)
@@ -99,24 +100,24 @@ net.ipv4.conf.all.rp_filter         = 1
 kernel.panic_on_oops                = 1
 ```
 
-### Kernel Modules
+### Kernel Features
 
-Auto-loaded modules for container networking:
-- `overlay` - OverlayFS for container layers
-- `br_netfilter` - Bridge netfilter for iptables
+`overlay` (container layers) and `br_netfilter` (iptables for bridged traffic) are built into the
+guest kernel. It has no module support, so `/etc/modules-load.d` lists nothing.
 
 ### Containerd Configuration
 
 - Config location: `/etc/containerd/config.toml`
 - Socket: `unix:///run/containerd/containerd.sock`
 - Enabled as systemd service
-- CNI network configuration removed (managed by Kubernetes)
+- `SystemdCgroup = true`, matching the kubelet's systemd cgroup driver set by kubeadm
+- Pod network: `/etc/cni/net.d/10-dozlab-bridge.conflist`, the bridge plugin from the containerd
+  tarball with pods on `10.244.0.0/24`. One node, so no overlay network or CNI pods
 
 ### Kubelet Configuration
 
-- Runtime: containerd (via CRI)
-- Extra args: `--container-runtime=remote --runtime-request-timeout=15m`
-- Config: `/etc/systemd/system/kubelet.service.d/0-containerd.conf`
+- Runtime: containerd (via CRI); kubeadm writes the kubelet's config and runtime endpoint
+- No extra flags (the old `--container-runtime=remote` was removed in Kubernetes 1.27)
 - Enabled as systemd service
 - Packages held to prevent accidental upgrades
 
@@ -135,20 +136,19 @@ docker run --rm dozlab-k8s:latest kubectl version --client
 docker run --rm dozlab-k8s:latest containerd --version
 ```
 
-### Initialize Kubernetes Cluster
+### The Cluster Is Set Up on First Boot
 
-```bash
-# In a Firecracker VM or privileged container
-kubeadm init --pod-network-cidr=10.244.0.0/16
+`dozlab-kubeadm-init.service` runs `/usr/local/sbin/dozlab-kubeadm-init` once, on the VM's first
+boot, after cloud-init has set the session's hostname:
 
-# Configure kubectl
-mkdir -p $HOME/.kube
-cp /etc/kubernetes/admin.conf $HOME/.kube/config
-chown $(id -u):$(id -g) $HOME/.kube/config
+- `kubeadm init` for the installed version, advertising eth0's address, pod CIDR `10.244.0.0/16`,
+  node name = hostname
+- copies `admin.conf` to `/root/.kube/config`, so `kubectl` works for root
+- removes the control-plane taint, so pods run on this single node
 
-# Install CNI (e.g., Flannel)
-kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
-```
+It skips itself once `/etc/kubernetes/admin.conf` exists, so a persistent session keeps its
+cluster. The first boot pulls the control-plane images, so the VM needs internet access.
+Progress: `journalctl -u dozlab-kubeadm-init -f`.
 
 ### Join Worker Node
 
@@ -211,10 +211,11 @@ docker rm k8s-export
 
 ### Recommended Resources
 
-For a single-node Kubernetes cluster:
-- **CPU**: 4+ vCPUs
-- **Memory**: 4GB+ RAM
-- **Disk**: 4GB+ storage
+For the single-node cluster, start at kubeadm's minimum for a control-plane node, then measure
+(dozlab-api `docs/decision.md`, "Keeping resources to a minimum"):
+- **CPU**: 2 vCPUs (kubeadm's preflight check requires 2)
+- **Memory**: 2 GiB (kubeadm's preflight check requires about 1.7 GiB)
+- **Disk**: 4 GiB
 
 For multi-node clusters, adjust accordingly per node.
 
