@@ -81,6 +81,8 @@ Alpine-based init container that downloads, prepares, and resizes rootfs images 
 - `LOCAL_DEV_IMAGE_PATH` - Local development image path (default: `/app/image.ext4`)
 - `IMAGE_DOWNLOAD_URL` - URL to fetch the rootfs image from (optional)
 - `IMAGE_SIZE` - Target disk size for the VM (default: `1G`)
+- `WRITABLE_DISK_PATH` - Optional: keep the image as a read-only base and create the session's writable disk here (see `init-setup/README.md`)
+- `WRITABLE_DISK_SIZE` - Size of the writable disk (default: `1G`)
 
 **Workflow**:
 1. Creates the image directory if it doesn't exist
@@ -525,6 +527,8 @@ spec:
 | `LOCAL_DEV_IMAGE_PATH` | `/app/image.ext4` | Local development image path |
 | `IMAGE_DOWNLOAD_URL` | (empty) | URL to download rootfs from |
 | `IMAGE_SIZE` | `1G` | Target disk size |
+| `WRITABLE_DISK_PATH` | (empty) | Optional: read-only base plus a writable disk at this path |
+| `WRITABLE_DISK_SIZE` | `1G` | Size of the writable disk |
 
 ## Testing and Validation
 

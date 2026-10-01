@@ -112,11 +112,36 @@ NoCloud seed into `/var/lib/cloud/seed/nocloud/` (see `init-setup/README.md`), a
 boot cloud-init installs the session's SSH key for root, sets the hostname and creates new SSH
 host keys for this VM (ed25519 and ecdsa). `files/cloud-init-dozlab.cfg` limits cloud-init to
 that seed, leaves networking to `10-eth0.network`, and turns off its resize (the init container
-grows the disk). Without a seed, cloud-init stays off.
+sizes the disk). Without a seed, cloud-init stays off.
 
 sshd starts after cloud-init has run, so the key is in place when SSH comes up. This adds about
 3 s to boot (see `docs/lab-timings.md`). `10-eth0.network` sets `IPv6AcceptRA=no`: the tap
 network has no IPv6 router, and waiting for one held cloud-init (and so sshd) for ~13 s.
+
+### Read-Only Base and Writable Disk (overlay-init)
+
+A VM can boot with this image as a read-only base that every session shares, plus a small
+writable disk of its own. `files/overlay-init` is installed as `/sbin/overlay-init` and runs as
+the VM's first process when the kernel gets `init=/sbin/overlay-init`:
+
+1. `/dev/vda`, the base, is already mounted read-only as `/`.
+2. It mounts `/dev/vdb`, the session's writable disk, on `/overlay`.
+3. It mounts an overlay of the two (lower: the base; upper: `upper/` on the writable disk) and
+   makes it the root.
+4. It starts systemd (`/sbin/init`).
+
+Inside the VM, `/` is the overlay and its size is the writable disk's. The base stays visible,
+read-only, at `/rom`, and the writable disk at `/rom/overlay`. Everything the VM writes,
+including the SSH host keys and the machine id from first boot, is in `upper/`; the base file
+is never changed.
+
+The init container creates the writable disk and puts the cloud-init seed on it
+(`init-setup/README.md`, `WRITABLE_DISK_PATH`). `start-firecracker.sh` in dozlab-infra attaches
+the drives and adds the kernel argument. If the writable disk is missing or can't be mounted,
+`overlay-init` prints `overlay-init: FATAL: ...` on the console and the VM stops instead of
+coming up on a root it can't write to.
+
+Without the kernel argument, nothing changes: the image boots on one read-write disk.
 
 ### Root Access
 

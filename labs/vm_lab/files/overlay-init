@@ -1,0 +1,42 @@
+#!/bin/sh
+# First process in a VM that boots from a shared read-only base (kernel argument
+# init=/sbin/overlay-init, which dozlab-infra's start-firecracker.sh adds when the session has a
+# writable disk). It puts the session's writable disk over the base and hands over to systemd:
+#
+#   /dev/vda  the lab's base image, read-only: the overlay's lower layer (already mounted as /)
+#   /dev/vdb  the session's writable disk (ext4, made by init-setup/init.sh): upper/ and work/
+#
+# Everything the VM writes lands in upper/ on /dev/vdb; the base is never changed. After the
+# switch the base is at /rom and the writable disk at /rom/overlay.
+# Any failure exits, which panics the kernel and stops the VM: a session must not come up on a
+# root it can't write to.
+set -eu
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+DISK=/dev/vdb
+# mount -n everywhere: the root is read-only, so mount can't write its own table (/run/mount) and
+# would report a mount that worked as failed.
+
+fatal() {
+    echo "overlay-init: FATAL: $*"
+    exit 1
+}
+
+# The kernel mounts devtmpfs on /dev when CONFIG_DEVTMPFS_MOUNT is set; do it here otherwise
+[ -b "$DISK" ] || mount -n -t devtmpfs devtmpfs /dev
+[ -b "$DISK" ] || fatal "no writable disk at $DISK"
+
+mount -n -t ext4 -o noatime "$DISK" /overlay || fatal "could not mount $DISK (is it ext4?)"
+mkdir -p /overlay/upper /overlay/work
+
+mount -n -t overlay -o lowerdir=/,upperdir=/overlay/upper,workdir=/overlay/work overlay /mnt ||
+    fatal "could not mount the overlay"
+
+# Take /dev along, so systemd finds it on the new root instead of mounting a second one
+mount -n --move /dev /mnt/dev
+
+pivot_root /mnt /mnt/rom
+cd /
+
+echo "overlay-init: root is an overlay of the read-only base and $DISK"
+exec /sbin/init "$@"
