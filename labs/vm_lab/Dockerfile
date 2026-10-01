@@ -9,6 +9,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends cloud-init && \
     rm -rf /var/lib/apt/lists/*
 COPY files/cloud-init-dozlab.cfg /etc/cloud/cloud.cfg.d/90-dozlab.cfg
 
+# Shared read-only base + per-session writable disk: with init=/sbin/overlay-init the VM's root
+# is an overlay of this image (/dev/vda, read-only) and the session's disk (/dev/vdb). The
+# script needs its mount points to exist in the read-only base. Without that kernel argument
+# the image boots as before, on one read-write disk.
+COPY files/overlay-init /usr/sbin/overlay-init
+RUN chmod 0755 /usr/sbin/overlay-init && mkdir -p /overlay /rom
+
 # Create the following files, but unset them
 RUN echo "" > /etc/machine-id && echo "" > /var/lib/dbus/machine-id
 

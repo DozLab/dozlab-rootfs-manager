@@ -24,6 +24,9 @@ RUN --mount=type=bind,from=lab,target=/lab \
  && printf '127.0.0.1 localhost\n127.0.1.1 %s\n::1 localhost ip6-localhost ip6-loopback\n' \
       "$VM_HOSTNAME" > /rootfs/etc/hosts \
  && ln -sfn ../run/systemd/resolve/stub-resolv.conf /rootfs/etc/resolv.conf \
+ # cloud-init must see every VM as a first boot: drop any state a build step left behind
+ && rm -rf /rootfs/var/lib/cloud/instance /rootfs/var/lib/cloud/instances \
+      /rootfs/var/lib/cloud/data /rootfs/var/lib/cloud/sem \
  && if [ -n "$AUTHORIZED_KEY" ]; then \
       install -d -m 0700 /rootfs/root/.ssh \
       && echo "$AUTHORIZED_KEY" > /rootfs/root/.ssh/authorized_keys \
