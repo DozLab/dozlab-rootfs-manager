@@ -1,0 +1,81 @@
+# shellcheck init.sh; build each lab's init image (base -> lab -> init, `make build-init`) on PRs
+# and push it to GHCR from main and from v<semver> tags. The runner only builds: it has no KVM, so
+# the labs boot on the node, where Flux rolls out the newest main-<sha7>-<run> tag (dozlab-api
+# docs/decision.md, "CI on GitHub Actions, CD with Flux", which also has the tags and labels).
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']   # path filters don't apply to tag pushes
+    paths: ['Makefile', 'base_image/**', 'labs/**', 'init-setup/**', '.github/workflows/ci.yml']
+  pull_request:
+    paths: ['Makefile', 'base_image/**', 'labs/**', 'init-setup/**', '.github/workflows/ci.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck -S warning init-setup/init.sh
+
+  init-image:
+    needs: shellcheck
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        lab: [vm, k8s]
+    steps:
+      - uses: actions/checkout@v4
+      # The lab rootfs is in the image twice while building (lab image + ext4); make room
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      # Same tags as the other DozLab images (see dozlab-controller's ci.yml):
+      #   main-<sha7>-<run> and sha-<full sha> from main, 1.2.3 / 1.2 / 1 from v1.2.3, pr-<n> unpushed
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/dozlab/dozlab-init-${{ matrix.lab }}
+          tags: |
+            type=raw,value=main-{{sha}}-${{ github.run_number }},enable={{is_default_branch}}
+            type=sha,format=long,enable=${{ github.event_name == 'push' }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
+            type=ref,event=pr
+          # No `latest`: Flux can't see a mutable tag change, and it hides what runs
+          flavor: latest=false
+      # The lab Dockerfiles build FROM docker.io/dozman99/dozlab-<base|vm>:$TAG, which this
+      # builds locally first, so the build uses Make's default registry and a fixed TAG, and is
+      # retagged after. The OCI labels are set in init-setup/Makefile.
+      - name: make build-init LAB=${{ matrix.lab }}
+        run: make build-init LAB=${{ matrix.lab }} TAG=ci VERSION=${{ steps.meta.outputs.version }}
+      - if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - if: github.event_name == 'push'
+        name: Push ghcr.io/dozlab/dozlab-init-${{ matrix.lab }}
+        env:
+          SRC: docker.io/dozman99/dozlab-init-${{ matrix.lab }}:ci
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          for dst in $TAGS; do
+            docker tag "$SRC" "$dst"
+            docker push "$dst"
+          done

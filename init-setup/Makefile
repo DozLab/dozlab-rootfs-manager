@@ -1,11 +1,13 @@
 .PHONY: build build-no-image push
 
 DOCKER := docker
-BUILD_DATE:=$(shell date --rfc-3339=seconds)
+BUILD_DATE:=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 GIT_SHA:=$(shell git rev-parse HEAD)
 
 REGISTRY?=docker.io/dozman99
 TAG?=$(shell git rev-parse --short HEAD)
+# org.opencontainers.image.version; CI sets the tag it pushes (main-<sha7>-<run> or a release)
+VERSION?=$(TAG)
 
 # Which lab's image becomes the VM rootfs: vm, k8s or custom-initrd (build it first, e.g.
 # make build-vm at the repo root)
@@ -19,6 +21,9 @@ build:
 	$(DOCKER) build -t $(IMAGE_NAME):$(TAG) \
 		--build-arg LAB_IMAGE=$(LAB_IMAGE) \
 		$(if $(AUTHORIZED_KEYS),--build-arg AUTHORIZED_KEY="$$(cat $(AUTHORIZED_KEYS))") \
+		--label "org.opencontainers.image.title"="dozlab-init-$(LAB)" \
+		--label "org.opencontainers.image.version"="$(VERSION)" \
+		--label "org.opencontainers.image.vendor"="DozLab" \
 		--label "org.opencontainers.image.created"="$(BUILD_DATE)" \
 		--label "org.opencontainers.image.source"="https://github.com/DozLab/dozlab-rootfs-manager" \
 		--label "org.opencontainers.image.revision"="$(GIT_SHA)" \
